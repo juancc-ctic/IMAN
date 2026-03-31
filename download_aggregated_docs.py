@@ -8,7 +8,7 @@ Document URIs may point to external platforms (e.g. contractaciopublica.cat,
 contratos-publicos.comunidad.madrid), not only contrataciondelestado.es.
 
 Usage:
-  python download_aggregated_docs.py <path_to.atom> [--try N] [--output DIR]
+  python download_aggregated_docs.py <path_to.atom> [--try N] [--output DIR] [--json-out]
   python download_aggregated_docs.py PlataformasAgregadasSinMenores_20260206_040054_1.atom
 """
 
@@ -16,6 +16,7 @@ import argparse
 import re
 import sys
 import xml.etree.ElementTree as ET
+import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -147,6 +148,48 @@ def try_download(url: str, dest_path: Path, timeout: int = 30) -> Tuple[bool, st
         return False, f"HTTP {r.status_code}"
     except requests.RequestException as e:
         return False, str(e)
+    
+def extract_tender_data(entry_el) -> dict:
+    """Extrae los campos requeridos de la entrada XML para el JSON."""
+    ATOM = f"{{{ATOM_NS}}}"
+    CAC = f"{{{CAC_NS}}}"
+    CBC = f"{{{CBC_NS}}}"
+
+    data = {
+        "id": None,
+        "link": get_entry_detail_link(entry_el), 
+        "title": None,
+        "party_name": None,
+        "tax_exclusive_amount": None,
+        "estimated_overall_contract_amount": None
+    }
+
+    # <id>
+    id_el = entry_el.find(f".//{ATOM}id")
+    if id_el is not None:
+        data["id"] = (id_el.text or "").strip()
+
+    # <title>
+    title_el = entry_el.find(f".//{ATOM}title")
+    if title_el is not None:
+        data["title"] = (title_el.text or "").strip()
+
+    # <cac:PartyName> -> <cbc:Name>
+    party_name_el = entry_el.find(f".//{CAC}PartyName/{CBC}Name")
+    if party_name_el is not None:
+        data["party_name"] = (party_name_el.text or "").strip()
+
+    # <cbc:TaxExclusiveAmount>
+    tax_excl_el = entry_el.find(f".//{CBC}TaxExclusiveAmount")
+    if tax_excl_el is not None:
+        data["tax_exclusive_amount"] = (tax_excl_el.text or "").strip()
+
+    # <cbc:EstimatedOverallContractAmount>
+    est_amount_el = entry_el.find(f".//{CBC}EstimatedOverallContractAmount")
+    if est_amount_el is not None:
+        data["estimated_overall_contract_amount"] = (est_amount_el.text or "").strip()
+
+    return data
 
 
 def main() -> int:
@@ -172,6 +215,13 @@ def main() -> int:
         action="store_true",
         help="Only print document list and detail links, do not download.",
     )
+
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=Path("licitaciones_extraidas.json"),
+        help="JSON output file (default: licitaciones_extraidas.json)",
+    )
     args = parser.parse_args()
 
     if not args.atom_file.exists():
@@ -188,9 +238,17 @@ def main() -> int:
     ok = 0
     failed_with_detail = []
 
+    tenders_data = []
+
     for entry in entries:
         if not entry_has_allowed_contract_folder_status(entry):
             continue
+
+        # Extract data to JSON
+        tender_info = extract_tender_data(entry)
+        tenders_data.append(tender_info)
+
+        folder_name = get_entry_folder_name(entry)
         folder_name = get_entry_folder_name(entry)
         entry_dir = args.output / folder_name
         detail_url = get_entry_detail_link(entry)
@@ -232,6 +290,9 @@ def main() -> int:
         print("\n(You can try opening the tender page in your browser to download documents manually.)")
 
     print(f"\nDownloaded {ok}/{total} documents.")
+    with open(args.json_out, "w", encoding="utf-8") as f:
+        json.dump(tenders_data, f, ensure_ascii=False, indent=4)
+    print(f"Data exported to JSON in: {args.json_out}")
     return 0
 
 
