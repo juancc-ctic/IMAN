@@ -1,0 +1,253 @@
+{
+  "info": {
+    "_postman_id": "8a4b38c1-9cbd-4026-af8a-bf34c9f893e9",
+    "name": "EU Search API (fetch_eu_topics & fetch_eu_calls)",
+    "description": "Postman collection for the EU Search API (EU Funding & Tenders Portal).\n\nBase: https://api.tech.ec.europa.eu/search-api/prod/rest/search\n\nUse Body → form-data. Set Content-Type to **application/json** for each key (query, languages, displayFields, sort) in the form-data panel—do not leave as Auto, or the API returns \"Content-Type 'application/octet-stream' is not supported\".\n\nRef: https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/support/apis",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "29685442"
+  },
+  "item": [
+    {
+      "name": "fetch_horizon_topics",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "query",
+              "value": "{\"bool\": {\"must\": [{\"terms\": {\"type\": [\"1\"]}}, {\"terms\": {\"status\": [\"31094501\", \"31094502\", \"31094503\"]}}, {\"term\": {\"programmePeriod\": \"2021 - 2027\"}}, {\"terms\": {\"frameworkProgramme\": [\"43108390\"]}}, {\"terms\": {\"programmeDivision\": [43108557, 43118846, 43118971, 43120193, 43120821, 43121563, 43108541, 43121707, 43108514]}}]}}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Elasticsearch-style query (type 1 = topics). Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "languages",
+              "value": "[\"en\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Response language. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "displayFields",
+              "value": "[\"identifier\", \"title\", \"callTitle\", \"description\", \"furtherInformation\", \"missionDescription\", \"missionDetails\", \"destinationDescription\", \"destinationDetails\", \"duration\", \"summary\", \"reference\", \"callccm2Id\", \"status\", \"projectAcronym\", \"startDate\", \"deadlineDate\", \"deadlineModel\", \"frameworkProgramme\", \"typesOfAction\", \"keywords\", \"tags\", \"programmeDivision\", \"budgetOverview\", \"descriptionByte\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Fields to return. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "sort",
+              "value": "{\"order\": \"ASC\", \"field\": \"title\"}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Sort by title. Set Content-Type to application/json in UI."
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}?apiKey=SEDIA&text=***&pageSize={{pageSize}}&pageNumber={{pageNumber}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "query": [
+            {
+              "key": "apiKey",
+              "value": "SEDIA",
+              "description": "API key"
+            },
+            {
+              "key": "text",
+              "value": "***",
+              "description": "Search text (wildcard for all)"
+            },
+            {
+              "key": "pageSize",
+              "value": "{{pageSize}}",
+              "description": "Results per page (max 500)"
+            },
+            {
+              "key": "pageNumber",
+              "value": "{{pageNumber}}",
+              "description": "Page number (1-based)"
+            }
+          ]
+        },
+        "description": "Fetches EU funding topics. Matches fetch_eu_topics() in periodic_eu_topics_checker.py. In Body → form-data, set Content-Type to application/json for query, languages, displayFields, and sort (not Auto)."
+      },
+      "response": []
+    },
+    {
+      "name": "fetch_non_horizon_topics",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "query",
+              "value": "{\"bool\": {\"must\": [{\"terms\": {\"type\": [\"1\"]}}, {\"terms\": {\"status\": [\"31094501\", \"31094502\", \"31094503\"]}}, {\"term\": {\"programmePeriod\": \"2021 - 2027\"}}, {\"terms\": {\"frameworkProgramme\": [\"43152860\", \"44181033\", \"43252405\", \"43251589\" ]}}]}}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Elasticsearch-style query (type 1 = topics). Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "languages",
+              "value": "[\"en\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Response language. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "displayFields",
+              "value": "[\"identifier\", \"title\", \"callTitle\", \"description\", \"furtherInformation\", \"missionDescription\", \"missionDetails\", \"destinationDescription\", \"destinationDetails\", \"duration\", \"summary\", \"reference\", \"callccm2Id\", \"status\", \"projectAcronym\", \"startDate\", \"deadlineDate\", \"deadlineModel\", \"frameworkProgramme\", \"typesOfAction\", \"keywords\", \"tags\", \"programmeDivision\", \"budgetOverview\", \"descriptionByte\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Fields to return. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "sort",
+              "value": "{\"order\": \"ASC\", \"field\": \"title\"}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Sort by title. Set Content-Type to application/json in UI."
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}?apiKey=SEDIA&text=***&pageSize={{pageSize}}&pageNumber={{pageNumber}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "query": [
+            {
+              "key": "apiKey",
+              "value": "SEDIA",
+              "description": "API key"
+            },
+            {
+              "key": "text",
+              "value": "***",
+              "description": "Search text (wildcard for all)"
+            },
+            {
+              "key": "pageSize",
+              "value": "{{pageSize}}",
+              "description": "Results per page (max 500)"
+            },
+            {
+              "key": "pageNumber",
+              "value": "{{pageNumber}}",
+              "description": "Page number (1-based)"
+            }
+          ]
+        },
+        "description": "Fetches EU funding topics. Matches fetch_eu_topics() in periodic_eu_topics_checker.py. In Body → form-data, set Content-Type to application/json for query, languages, displayFields, and sort (not Auto)."
+      },
+      "response": []
+    },
+    {
+      "name": "fetch_eu_calls",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "query",
+              "value": "{\"bool\":{\"must\":[{\"terms\":{\"type\":[\"8\"]}},{\"term\":{\"programmePeriod\":\"2021 - 2027\"}},{\"terms\":{\"frameworkProgramme\":[\"43108390\"]}}]}}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Query from queryCalls.json (type 8 = calls). Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "languages",
+              "value": "[\"en\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Response language. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "displayFields",
+              "value": "[\"identifier\", \"budget\", \"title\", \"callccm2Id\", \"content\", \"description\", \"status\", \"caName\", \"startDate\", \"deadlineDate\", \"deadlineModel\", \"esDA_FirstIngestDate\", \"furtherInformation\"]",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Fields from queryFields.json. Set Content-Type to application/json in UI."
+            },
+            {
+              "key": "sort",
+              "value": "{\"order\": \"ASC\", \"field\": \"caName\"}",
+              "type": "text",
+              "contentType": "application/json",
+              "description": "Sort by call name. Set Content-Type to application/json in UI."
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}?apiKey=SEDIA&text=***&pageSize={{pageSize}}&pageNumber={{pageNumber}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "query": [
+            {
+              "key": "apiKey",
+              "value": "SEDIA",
+              "description": "API key"
+            },
+            {
+              "key": "text",
+              "value": "***",
+              "description": "Search text (wildcard for all)"
+            },
+            {
+              "key": "pageSize",
+              "value": "{{pageSize}}",
+              "description": "Results per page (max 500)"
+            },
+            {
+              "key": "pageNumber",
+              "value": "{{pageNumber}}",
+              "description": "Page number (1-based)"
+            }
+          ]
+        },
+        "description": "Fetches EU funding calls. Matches fetch_eu_calls() (queryCalls.json + queryFields.json). In Body → form-data, set Content-Type to application/json for each key (not Auto)."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.tech.ec.europa.eu/search-api/prod/rest/search"
+    },
+    {
+      "key": "pageSize",
+      "value": "500"
+    },
+    {
+      "key": "pageNumber",
+      "value": "1"
+    }
+  ]
+}
