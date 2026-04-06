@@ -1,0 +1,11 @@
+# Dagster instance: Postgres-backed storage (dev defaults; override for production).
+# https://docs.dagster.io/deployment/oss/oss-instance-configuration
+
+storage:
+  postgres:
+    postgres_db:
+      username: postgres
+      password: postgres
+      hostname: postgres
+      db_name: dagster
+      port: 5432

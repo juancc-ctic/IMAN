@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  user_code:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/docker/entrypoint-user-code.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    working_dir: /app
+    # Pass through any IMAN_* / LLM_* keys from .env even if not listed below.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      DAGSTER_DISABLE_TELEMETRY: "1"
+      IMAN_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/iman
+      IMAN_DATA_DIR: /data
+      IMAN_ATOM_SOURCE: ${IMAN_ATOM_SOURCE:-}
+      IMAN_CUTOFF_DATE: ${IMAN_CUTOFF_DATE:-}
+      IMAN_MAX_TRIES: ${IMAN_MAX_TRIES:-0}
+      EMBEDDINGS_API_BASE: ${EMBEDDINGS_API_BASE:-http://192.168.4.32:8116/v1}
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-Snowflake/snowflake-arctic-embed-l-v2.0}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://192.168.4.32:4000/v1}
+      LLM_MODEL: ${LLM_MODEL:-mistralai/Mistral-Small-3.2-24B-Instruct-2506}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      IMAN_LLM_PRINT_JSON: ${IMAN_LLM_PRINT_JSON:-0}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      IMAN_EMBEDDING_MODEL: ${IMAN_EMBEDDING_MODEL:-}
+      IMAN_CHAT_MODEL: ${IMAN_CHAT_MODEL:-}
+      IMAN_EMBEDDING_DIMENSION: ${IMAN_EMBEDDING_DIMENSION:-1024}
+      IMAN_SKIP_LLM_ENRICHMENT: ${IMAN_SKIP_LLM_ENRICHMENT:-0}
+      IMAN_SKIP_EMBEDDINGS: ${IMAN_SKIP_EMBEDDINGS:-0}
+      IMAN_USE_MULTIMODAL_LLM: ${IMAN_USE_MULTIMODAL_LLM:-true}
+      IMAN_MULTIMODAL_MAX_PAGES_PER_PDF: ${IMAN_MULTIMODAL_MAX_PAGES_PER_PDF:-20}
+      IMAN_MULTIMODAL_DPI: ${IMAN_MULTIMODAL_DPI:-150}
+      IMAN_MULTIMODAL_MAX_IMAGES_TOTAL: ${IMAN_MULTIMODAL_MAX_IMAGES_TOTAL:-60}
+      IMAN_MULTIMODAL_IMAGES_PER_REQUEST: ${IMAN_MULTIMODAL_IMAGES_PER_REQUEST:-12}
+    volumes:
+      - iman_data:/data
+      - ./docker/dagster_home:/opt/dagster/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dagster_webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /opt/dagster/dagster_home
+    command:
+      - dagster-webserver
+      - -h
+      - "0.0.0.0"
+      - -p
+      - "3000"
+      - -w
+      - workspace.yaml
+    environment:
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      DAGSTER_DISABLE_TELEMETRY: "1"
+    volumes:
+      - ./docker/dagster_home:/opt/dagster/dagster_home
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      user_code:
+        condition: service_started
+
+  dagster_daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /opt/dagster/dagster_home
+    command:
+      - dagster-daemon
+      - run
+    environment:
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      DAGSTER_DISABLE_TELEMETRY: "1"
+    volumes:
+      - ./docker/dagster_home:/opt/dagster/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      user_code:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  iman_data:

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iman-ingestion"
+version = "0.1.0"
+description = "Spanish public procurement ATOM ingestion, Dagster orchestration, and LLM pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31.0,<3",
+    "dagster==1.12.21",
+    "dagster-webserver==1.12.21",
+    "dagster-postgres==0.28.21",
+    "psycopg2-binary>=2.9.9,<3",
+    "alembic>=1.13.0,<2",
+    "sqlalchemy>=2.0.0,<3",
+    "openai>=1.40.0,<2",
+    "pypdf>=4.0.0,<6",
+    "pgvector>=0.2.5,<0.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0,<9",
+]
+
+[project.scripts]
+download-aggregated-docs = "iman_ingestion.aggregated.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["iman_ingestion*"]
+
+[tool.setuptools.package-data]
+iman_ingestion = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "llm_integration: live OpenAI-compatible chat API (IMAN_RUN_LLM_INTEGRATION=1)",
+]

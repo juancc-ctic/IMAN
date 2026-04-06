@@ -1,5 +1,48 @@
-.vscode
-__pycache__/
+# Local secrets & generated extracts
+.env
+licitaciones_extraidas.json
+
+# Project data dirs
 atoms/
 downloads
-licitaciones_extraidas.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+build/
+dist/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Pytest, coverage, linters
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Dagster local instance (docker bind mount)
+docker/dagster_home/storage/
+docker/dagster_home/logs/
+docker/dagster_home/.nux/
+docker/dagster_home/.telemetry/
+
+# Editors & OS
+.vscode
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
