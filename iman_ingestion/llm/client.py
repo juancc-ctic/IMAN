@@ -243,7 +243,11 @@ def analyze_tender_proposal(
                             partial = {}
                     except json.JSONDecodeError:
                         partial = {}
-                    merge_tender_partial(accumulated, partial)
+                    merge_tender_partial(
+                        accumulated,
+                        partial,
+                        merge_mode="batch_overwrites",
+                    )
                     if all_required_satisfied(accumulated):
                         return _return_tender_analysis(accumulated)
 

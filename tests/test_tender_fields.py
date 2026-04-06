@@ -86,6 +86,16 @@ def test_merge_tender_partial_strings() -> None:
     assert acc["object_of_the_contract"] == "a"
 
 
+def test_merge_tender_partial_strings_batch_overwrites() -> None:
+    acc: dict = {"object_of_the_contract": "cover guess"}
+    tf.merge_tender_partial(
+        acc,
+        {"object_of_the_contract": "detailed object from pliego"},
+        merge_mode="batch_overwrites",
+    )
+    assert acc["object_of_the_contract"] == "detailed object from pliego"
+
+
 def test_merge_tender_partial_packages_union_by_label() -> None:
     acc = {
         "packages": [
@@ -149,11 +159,11 @@ def test_merge_discard_criteria_flags() -> None:
 
 def test_multimodal_images_per_request_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IMAN_MULTIMODAL_IMAGES_PER_REQUEST", "99")
-    assert tf.multimodal_images_per_request() == 15
+    assert tf.multimodal_images_per_request() == 64
     monkeypatch.setenv("IMAN_MULTIMODAL_IMAGES_PER_REQUEST", "0")
     assert tf.multimodal_images_per_request() == 1
     monkeypatch.delenv("IMAN_MULTIMODAL_IMAGES_PER_REQUEST", raising=False)
-    assert tf.multimodal_images_per_request() == 12
+    assert tf.multimodal_images_per_request() == 20
 
 
 def test_partial_json_for_prompt_truncates(monkeypatch: pytest.MonkeyPatch) -> None:

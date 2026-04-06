@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Literal, Set
+
+MergeMode = Literal["first_wins", "batch_overwrites"]
 
 # Top-level string fields from the tender analysis schema.
 TOP_LEVEL_STRING_KEYS = (
@@ -44,20 +46,31 @@ _FIELD_LABELS: Dict[str, str] = {
 }
 
 
+# Batching: PCAP pages are sent in chunks of this many ``image_url`` parts per request.
+_DEFAULT_MULTIMODAL_IMAGES_PER_REQUEST = 20
+# Vision APIs differ; keep an upper bound to avoid huge single payloads.
+_MAX_MULTIMODAL_IMAGES_PER_REQUEST = 64
+
+
 def multimodal_images_per_request() -> int:
     """Return max images per multimodal chat request from env.
 
-    Reads ``IMAN_MULTIMODAL_IMAGES_PER_REQUEST`` (default 12). Invalid values
-    fall back to 12. Result is clamped to 1..15.
+    Reads ``IMAN_MULTIMODAL_IMAGES_PER_REQUEST`` (default 20). Invalid values
+    fall back to the default. Result is clamped to ``[1, _MAX_MULTIMODAL_IMAGES_PER_REQUEST]``.
 
     Returns:
-        Integer in ``[1, 15]``.
+        Integer in ``[1, 64]`` (cap may change with ``_MAX_MULTIMODAL_IMAGES_PER_REQUEST``).
     """
     try:
-        raw = int(os.environ.get("IMAN_MULTIMODAL_IMAGES_PER_REQUEST", "12"))
+        raw = int(
+            os.environ.get(
+                "IMAN_MULTIMODAL_IMAGES_PER_REQUEST",
+                str(_DEFAULT_MULTIMODAL_IMAGES_PER_REQUEST),
+            ),
+        )
     except ValueError:
-        raw = 12
-    return max(1, min(15, raw))
+        raw = _DEFAULT_MULTIMODAL_IMAGES_PER_REQUEST
+    return max(1, min(_MAX_MULTIMODAL_IMAGES_PER_REQUEST, raw))
 
 
 def _nonempty_str(val: Any) -> bool:
@@ -158,15 +171,21 @@ def _merge_strings(
     acc: Dict[str, Any],
     batch: Dict[str, Any],
     keys: tuple[str, ...],
+    *,
+    merge_mode: MergeMode = "first_wins",
 ) -> None:
     for key in keys:
         if key not in batch:
             continue
+        val = batch.get(key)
+        if not _nonempty_str(val):
+            continue
+        if merge_mode == "batch_overwrites":
+            acc[key] = val.strip()
+            continue
         if _nonempty_str(acc.get(key)):
             continue
-        val = batch.get(key)
-        if _nonempty_str(val):
-            acc[key] = val.strip()
+        acc[key] = val.strip()
 
 
 def _merge_packages(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
@@ -206,7 +225,12 @@ def _merge_packages(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
     acc["packages"] = list(by_label.values())
 
 
-def _merge_outsourcing(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
+def _merge_outsourcing(
+    acc: Dict[str, Any],
+    batch: Dict[str, Any],
+    *,
+    merge_mode: MergeMode = "first_wins",
+) -> None:
     if "outsourcing" not in batch:
         return
     b = batch["outsourcing"]
@@ -220,6 +244,17 @@ def _merge_outsourcing(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
     for k, v in b.items():
         if v is None:
             continue
+        if merge_mode == "batch_overwrites":
+            if k == "notes" and isinstance(v, str):
+                prev = merged.get(k)
+                if isinstance(prev, str) and prev.strip():
+                    if v.strip() and v.strip() not in prev:
+                        merged[k] = f"{prev.strip()}\n{v.strip()}"
+                else:
+                    merged[k] = v.strip()
+            else:
+                merged[k] = v
+            continue
         if k not in merged or merged[k] is None or merged[k] == "":
             merged[k] = v
         elif k == "notes" and isinstance(v, str) and isinstance(merged.get(k), str):
@@ -228,7 +263,12 @@ def _merge_outsourcing(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
     acc["outsourcing"] = merged
 
 
-def _merge_discard_review(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
+def _merge_discard_review(
+    acc: Dict[str, Any],
+    batch: Dict[str, Any],
+    *,
+    merge_mode: MergeMode = "first_wins",
+) -> None:
     if "discard_review" not in batch:
         return
     b = batch["discard_review"]
@@ -239,13 +279,19 @@ def _merge_discard_review(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
         cur = {}
     merged: Dict[str, Any] = dict(cur)
 
-    if _nonempty_str(b.get("summary")) and not _nonempty_str(merged.get("summary")):
-        merged["summary"] = b["summary"].strip()
-    elif _nonempty_str(b.get("summary")) and _nonempty_str(merged.get("summary")):
-        pass
+    if merge_mode == "batch_overwrites":
+        if _nonempty_str(b.get("summary")):
+            merged["summary"] = b["summary"].strip()
+    else:
+        if _nonempty_str(b.get("summary")) and not _nonempty_str(merged.get("summary")):
+            merged["summary"] = b["summary"].strip()
+        elif _nonempty_str(b.get("summary")) and _nonempty_str(merged.get("summary")):
+            pass
 
     for key in ("potential_discard",):
-        if key in b and b[key] is not None and merged.get(key) is None:
+        if key not in b or b[key] is None:
+            continue
+        if merge_mode == "batch_overwrites" or merged.get(key) is None:
             merged[key] = b[key]
 
     br = b.get("reasons_for_manual_review")
@@ -276,7 +322,9 @@ def _merge_discard_review(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
             if not isinstance(me, dict):
                 me = {}
             applies = be.get("applies")
-            if applies is not None and me.get("applies") is None:
+            if applies is not None and (
+                merge_mode == "batch_overwrites" or me.get("applies") is None
+            ):
                 me["applies"] = applies
             ev_b = be.get("evidence")
             if _nonempty_str(ev_b):
@@ -294,35 +342,58 @@ def _merge_discard_review(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
 def merge_tender_partial(
     accumulated: Dict[str, Any],
     batch_partial: Dict[str, Any],
+    *,
+    merge_mode: MergeMode = "first_wins",
 ) -> None:
     """Merge one batch partial JSON into ``accumulated`` in place.
 
-    Strings: keep first non-empty. ``packages``: union by normalized label.
-    ``outsourcing``: fill null/empty keys. ``discard_review``: merge summary,
-    reasons (unique), and per-flag ``applies``/``evidence``.
+    ``merge_mode``:
+
+    - ``first_wins`` (default): keep first non-empty strings; fill gaps only.
+      Used for text gap-fill and single-shot merges.
+    - ``batch_overwrites``: each non-empty batch value overwrites (later PCAP
+      page batches refine cover-page guesses). Use for multimodal image batches.
+
+    ``packages``: union by normalized label (fills empty fields on duplicate labels).
+    ``discard_review``: reasons deduplicated; ``evidence`` appended when new.
 
     Args:
         accumulated: Running merge target; updated in place.
         batch_partial: Model output for one batch (may be empty).
+        merge_mode: How to combine with prior merge state.
     """
     if not batch_partial:
         return
-    _merge_strings(accumulated, batch_partial, TOP_LEVEL_STRING_KEYS)
+    _merge_strings(
+        accumulated,
+        batch_partial,
+        TOP_LEVEL_STRING_KEYS,
+        merge_mode=merge_mode,
+    )
     _merge_packages(accumulated, batch_partial)
-    _merge_outsourcing(accumulated, batch_partial)
-    _merge_discard_review(accumulated, batch_partial)
+    _merge_outsourcing(accumulated, batch_partial, merge_mode=merge_mode)
+    _merge_discard_review(accumulated, batch_partial, merge_mode=merge_mode)
 
 
-def partial_json_for_prompt(accumulated: Dict[str, Any], max_chars: int = 4000) -> str:
+def partial_json_for_prompt(
+    accumulated: Dict[str, Any],
+    max_chars: int | None = None,
+) -> str:
     """Serialize accumulated state for inclusion in batch user messages.
 
     Args:
         accumulated: Current merged JSON.
-        max_chars: Max length before truncation marker.
+        max_chars: Max length before truncation marker. When ``None``, uses
+            ``IMAN_LLM_PARTIAL_JSON_MAX_CHARS`` (default 12000).
 
     Returns:
         Compact JSON string, possibly truncated.
     """
+    if max_chars is None:
+        try:
+            max_chars = int(os.environ.get("IMAN_LLM_PARTIAL_JSON_MAX_CHARS", "12000"))
+        except ValueError:
+            max_chars = 12000
     try:
         s = json.dumps(accumulated, ensure_ascii=False, separators=(",", ":"))
     except (TypeError, ValueError):

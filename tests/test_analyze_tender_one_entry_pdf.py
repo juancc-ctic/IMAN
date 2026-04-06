@@ -7,11 +7,15 @@
 
    export IMAN_RUN_LLM_INTEGRATION=1
    pytest tests/test_analyze_tender_one_entry_pdf.py::test_one_json_entry_and_pdf_sent_to_llm_multimodal_live -v
+
+The live test rasterizes **multiple PCAP pages** (defaults: up to 160 pages, batch size 20 per chat call).
+To limit cost or runtime, set e.g. ``IMAN_LIVE_TEST_MAX_PAGES_PER_PDF=5`` before pytest.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -193,12 +197,29 @@ def test_one_json_entry_and_pdf_sent_to_llm_multimodal_live(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Same fixture path as the mocked test, but calls the real OpenAI-compatible API."""
+    """Same fixture path as the mocked test, but calls the real OpenAI-compatible API.
+
+    Unlike the mocked test (which forces a single page for determinism), this run sends up to
+    ``IMAN_MULTIMODAL_MAX_PAGES_PER_PDF`` rasterized pages, capped by ``IMAN_MULTIMODAL_MAX_IMAGES_TOTAL``,
+    matching :func:`iman_ingestion.assets.pipeline._collect_tender_image_base64s` behavior.
+    """
     monkeypatch.setenv("IMAN_USE_MULTIMODAL_LLM", "true")
-    monkeypatch.setenv("IMAN_MULTIMODAL_IMAGES_PER_REQUEST", "12")
-    monkeypatch.setenv("IMAN_MULTIMODAL_MAX_PAGES_PER_PDF", "1")
-    monkeypatch.setenv("IMAN_MULTIMODAL_DPI", "72")
-    monkeypatch.setenv("IMAN_MULTIMODAL_MAX_IMAGES_TOTAL", "12")
+    monkeypatch.setenv(
+        "IMAN_MULTIMODAL_IMAGES_PER_REQUEST",
+        os.environ.get("IMAN_LIVE_TEST_IMAGES_PER_REQUEST", "20"),
+    )
+    monkeypatch.setenv(
+        "IMAN_MULTIMODAL_MAX_PAGES_PER_PDF",
+        os.environ.get("IMAN_LIVE_TEST_MAX_PAGES_PER_PDF", "160"),
+    )
+    monkeypatch.setenv(
+        "IMAN_MULTIMODAL_DPI",
+        os.environ.get("IMAN_LIVE_TEST_MULTIMODAL_DPI", "72"),
+    )
+    monkeypatch.setenv(
+        "IMAN_MULTIMODAL_MAX_IMAGES_TOTAL",
+        os.environ.get("IMAN_LIVE_TEST_MAX_IMAGES_TOTAL", "160"),
+    )
 
     row = _load_sample_tender()
     pdf_path = tmp_path / "PCAP.pdf"

@@ -86,8 +86,8 @@ def convert_pdf_to_base64_pngs(
 
 
 def multimodal_max_pages_per_pdf() -> int:
-    """Max pages per PDF from ``IMAN_MULTIMODAL_MAX_PAGES_PER_PDF`` (default 20)."""
-    return int(os.environ.get("IMAN_MULTIMODAL_MAX_PAGES_PER_PDF", "20"))
+    """Max pages per PDF from ``IMAN_MULTIMODAL_MAX_PAGES_PER_PDF`` (default 160)."""
+    return int(os.environ.get("IMAN_MULTIMODAL_MAX_PAGES_PER_PDF", "160"))
 
 
 def multimodal_dpi() -> int:
@@ -96,5 +96,5 @@ def multimodal_dpi() -> int:
 
 
 def multimodal_max_images_total() -> int:
-    """Cap total rasterized pages per tender (PCAP only) from env (default 60)."""
-    return int(os.environ.get("IMAN_MULTIMODAL_MAX_IMAGES_TOTAL", "60"))
+    """Cap total rasterized pages per tender (PCAP only) from env (default 160)."""
+    return int(os.environ.get("IMAN_MULTIMODAL_MAX_IMAGES_TOTAL", "160"))

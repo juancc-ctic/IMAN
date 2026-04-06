@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+# PEP 660 editable installs need setuptools with build_editable (64+; pin higher for uv/pip edge cases).
+requires = ["setuptools>=70.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
