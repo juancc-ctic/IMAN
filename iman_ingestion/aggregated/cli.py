@@ -33,9 +33,14 @@ def main() -> int:
         "--try",
         dest="max_tries",
         type=int,
-        default=5,
+        default=0,
         metavar="N",
-        help="Try first N documents only (default 5). Use 0 for all.",
+        help=(
+            "Download at most N PDFs in total for this run (default 0 = no limit). "
+            "Counts every PCAP/PPT file; when N>0 and the limit is hit, the run "
+            "stops immediately and does not fetch further --cutoff-date chained "
+            "Atom pages."
+        ),
     )
     parser.add_argument(
         "--output",

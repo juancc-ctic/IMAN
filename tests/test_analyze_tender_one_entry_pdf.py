@@ -21,7 +21,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from iman_ingestion.llm.client import analyze_tender_proposal, get_llm_client
+from iman_ingestion.llm.client import (
+    IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
+    analyze_tender_proposal,
+    get_llm_client,
+)
 from iman_ingestion.llm.pdf_to_images import (
     convert_pdf_to_base64_pngs,
     multimodal_dpi,
@@ -172,6 +176,7 @@ def test_one_json_entry_and_pdf_sent_to_llm_multimodal_mocked(
     )
 
     assert result.get("parse_error") is not True
+    assert result.get(IMAN_ENRICHMENT_TOTAL_PAGES_KEY) == len(images)
     assert result.get("object_of_the_contract") == "Mantenimiento de software"
 
     client.chat.completions.create.assert_called_once()
@@ -202,7 +207,10 @@ def test_one_json_entry_and_pdf_sent_to_llm_multimodal_live(
     Unlike the mocked test (which forces a single page for determinism), this run sends up to
     ``IMAN_MULTIMODAL_MAX_PAGES_PER_PDF`` rasterized pages, capped by ``IMAN_MULTIMODAL_MAX_IMAGES_TOTAL``,
     matching :func:`iman_ingestion.assets.pipeline._collect_tender_image_base64s` behavior.
+
+    Run with ``pytest -s`` so the indented JSON from ``IMAN_LLM_PRINT_JSON`` is visible.
     """
+    monkeypatch.setenv("IMAN_LLM_PRINT_JSON", "1")
     monkeypatch.setenv("IMAN_USE_MULTIMODAL_LLM", "true")
     monkeypatch.setenv(
         "IMAN_MULTIMODAL_IMAGES_PER_REQUEST",

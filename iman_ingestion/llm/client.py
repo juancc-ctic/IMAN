@@ -31,6 +31,9 @@ _DEFAULT_EMBEDDINGS_MODEL = "Snowflake/snowflake-arctic-embed-l-v2.0"
 _DEFAULT_LLM_BASE_URL = "http://192.168.4.32:4000/v1"
 _DEFAULT_LLM_MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 
+# Merged into ``analyze_tender_proposal`` output for logging (not from the LLM).
+IMAN_ENRICHMENT_TOTAL_PAGES_KEY = "_iman_total_pages_processed"
+
 
 def _api_key() -> str:
     """Bearer key for OpenAI-compatible servers (never hardcode secrets in code)."""
@@ -119,15 +122,32 @@ def _use_multimodal_llm() -> bool:
     )
 
 
-def _return_tender_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Echo final JSON to stdout when ``IMAN_LLM_PRINT_JSON`` is truthy."""
+def _return_tender_analysis(
+    payload: Dict[str, Any],
+    *,
+    total_pages_processed: int = 0,
+) -> Dict[str, Any]:
+    """Attach pipeline metadata, optionally echo JSON to stdout.
+
+    Shallow-copies ``payload`` so batch merge dicts are not mutated.
+
+    Args:
+        payload: Model or merged enrichment dict.
+        total_pages_processed: PCAP pages rasterized and fed into this analysis
+            (``len(image_base64_pngs)``). Zero for text-only / metadata-only runs.
+
+    Returns:
+        Dict including ``IMAN_ENRICHMENT_TOTAL_PAGES_KEY``.
+    """
+    out = dict(payload)
+    out[IMAN_ENRICHMENT_TOTAL_PAGES_KEY] = total_pages_processed
     if os.environ.get("IMAN_LLM_PRINT_JSON", "").lower() in (
         "1",
         "true",
         "yes",
     ):
-        print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
-    return payload
+        print(json.dumps(out, ensure_ascii=False, indent=2), flush=True)
+    return out
 
 
 def analyze_tender_proposal(
@@ -155,11 +175,14 @@ def analyze_tender_proposal(
 
     Returns:
         Parsed JSON object; on failure, a minimal structure with ``parse_error``.
+        Always includes ``IMAN_ENRICHMENT_TOTAL_PAGES_KEY`` (rasterized PCAP
+        page count sent into the pipeline, or ``0`` when no images).
 
     If ``IMAN_LLM_PRINT_JSON`` is ``1``/``true``/``yes``, the returned dict is
     also printed as indented JSON to stdout (visible in Dagster logs or ``pytest -s``).
     """
     images = list(image_base64_pngs or [])
+    page_count = len(images)
     use_multimodal = _use_multimodal_llm() and bool(images)
 
     try:
@@ -191,7 +214,10 @@ def analyze_tender_proposal(
                 batch_index = 0
                 while start < len(images):
                     if all_required_satisfied(accumulated):
-                        return _return_tender_analysis(accumulated)
+                        return _return_tender_analysis(
+                            accumulated,
+                            total_pages_processed=page_count,
+                        )
                     chunk = images[start : start + per_req]
                     batch_index += 1
                     first_page = start + 1
@@ -199,7 +225,10 @@ def analyze_tender_proposal(
                     start += len(chunk)
                     missing = list_missing_field_labels(accumulated)
                     if not missing:
-                        return _return_tender_analysis(accumulated)
+                        return _return_tender_analysis(
+                            accumulated,
+                            total_pages_processed=page_count,
+                        )
                     text_part = build_tender_multimodal_batch_user_message(
                         title=title,
                         party_name=party_name,
@@ -249,7 +278,10 @@ def analyze_tender_proposal(
                         merge_mode="batch_overwrites",
                     )
                     if all_required_satisfied(accumulated):
-                        return _return_tender_analysis(accumulated)
+                        return _return_tender_analysis(
+                            accumulated,
+                            total_pages_processed=page_count,
+                        )
 
                 if not all_required_satisfied(accumulated) and (
                     pdf_text or ""
@@ -286,7 +318,10 @@ def analyze_tender_proposal(
                         except json.JSONDecodeError:
                             partial = {}
                         merge_tender_partial(accumulated, partial)
-                return _return_tender_analysis(accumulated)
+                return _return_tender_analysis(
+                    accumulated,
+                    total_pages_processed=page_count,
+                )
         if not use_multimodal:
             user = build_tender_analysis_user_message(
                 pdf_document_text=pdf_text or "(No PDF text could be loaded.)",
@@ -306,15 +341,22 @@ def analyze_tender_proposal(
         )
         raw = completion.choices[0].message.content or "{}"
         try:
-            return _return_tender_analysis(_parse_llm_json_object(raw))
+            return _return_tender_analysis(
+                _parse_llm_json_object(raw),
+                total_pages_processed=page_count,
+            )
         except json.JSONDecodeError as exc:
             return _return_tender_analysis(
                 default_enrichment_on_error(
                     f"Invalid JSON from model: {exc}: {raw[:1500]}",
                 ),
+                total_pages_processed=page_count,
             )
     except Exception as exc:
-        return _return_tender_analysis(default_enrichment_on_error(str(exc)))
+        return _return_tender_analysis(
+            default_enrichment_on_error(str(exc)),
+            total_pages_processed=page_count,
+        )
 
 
 def enrich_tender_summary(

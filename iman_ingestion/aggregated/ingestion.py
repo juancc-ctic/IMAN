@@ -53,7 +53,7 @@ class IngestionConfig:
     output_dir: Path
     json_out: Path
     cutoff_utc: Optional[datetime] = None
-    max_tries: int = 5
+    max_tries: int = 0
     no_download: bool = False
 
 
@@ -466,6 +466,13 @@ def run_ingestion(
             if hit_limit:
                 break
         if hit_limit:
+            if verbose and config.max_tries:
+                print(
+                    f"\nStopped: --try limit ({config.max_tries} PDFs). "
+                    "Next Atom pages in the chain were not fetched. "
+                    "Use --try 0 to download without this cap.",
+                    file=sys.stdout,
+                )
             break
 
     json_written: Optional[Path] = None

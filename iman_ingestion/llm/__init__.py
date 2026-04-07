@@ -1,6 +1,7 @@
 """OpenAI-compatible clients for embeddings and chat."""
 
 from iman_ingestion.llm.client import (
+    IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
     analyze_tender_proposal,
     embed_texts,
     enrich_tender_summary,
@@ -10,6 +11,7 @@ from iman_ingestion.llm.client import (
 )
 
 __all__ = [
+    "IMAN_ENRICHMENT_TOTAL_PAGES_KEY",
     "analyze_tender_proposal",
     "embed_texts",
     "enrich_tender_summary",

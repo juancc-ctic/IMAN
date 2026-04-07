@@ -13,7 +13,9 @@ TENDER_ANALYSIS_SYSTEM_PROMPT = """You are an assistant deployed at a technology
 
 Your role is to help the organization analyze, sort, and grade project proposals (public procurement notices and technical / legal documents) according to the center's strategic interests. You must be precise, grounded in the documents provided, and explicit when information is missing or unclear.
 
-Always respond with a single valid JSON object only, no markdown fences, no commentary before or after the JSON. Use null for unknown or not found values where a structured field is expected; use empty strings only when the schema asks for strings and the value is truly empty."""
+Always respond with a single valid JSON object only, no markdown fences, no commentary before or after the JSON. Use null for unknown or not found values where a structured field is expected; use empty strings only when the schema asks for strings and the value is truly empty.
+
+Include page provenance only where it adds value (see the JSON schema and page rules below). PCAP pages are 1-based and match the order of attached page images in multimodal mode."""
 
 
 # Shared JSON schema instructions (text or image input).
@@ -22,34 +24,49 @@ Extract and return a JSON object with exactly this structure (all string values 
 
 {{
   "object_of_the_contract": "string: what is being contracted",
+  "object_of_the_contract_pages": null | [1, 2],
   "scope_of_the_work": "string: main scope and deliverables",
-  "packages": null | [{{ "label": "string", "description": "string or null", "budget": "string or null" }}],
+  "scope_of_the_work_pages": null | [1, 2],
+  "packages": null | [{{ "label": "string", "description": "string or null", "budget": "string or null", "pages": null | [1, 2] }}],
   "economic_solvency": "string: requirements or guarantees mentioned",
+  "economic_solvency_pages": null | [1, 2],
   "required_profiles": "string: roles, qualifications, team requirements",
+  "required_profiles_pages": null | [1, 2],
   "assessment_criteria": "string: how the bid will be evaluated; include point breakdown if present",
+  "assessment_criteria_pages": null | [1, 2],
   "outsourcing": {{
     "exists": true | false | null,
     "percentage": "string or null (e.g. max % subcontracting allowed)",
-    "notes": "string"
+    "notes": "string",
+    "pages": null | [1, 2]
   }},
   "discard_review": {{
     "summary": "string: short rationale for a human reviewer",
+    "summary_pages": null | [1, 2],
     "potential_discard": true | false | null,
     "reasons_for_manual_review": ["string"],
     "criteria_flags": {{
-      "place_of_execution_not_asturias": {{ "applies": true | false | null, "evidence": "string" }},
-      "execution_period_under_2_months": {{ "applies": true | false | null, "evidence": "string" }},
-      "maintenance_longer_than_1_year": {{ "applies": true | false | null, "evidence": "string" }},
-      "asks_technical_assistance_service": {{ "applies": true | false | null, "evidence": "string" }},
-      "iso_certification_required": {{ "applies": true | false | null, "evidence": "string" }},
-      "ens_certification_required": {{ "applies": true | false | null, "evidence": "string" }},
-      "pmi_certified_profile_required": {{ "applies": true | false | null, "evidence": "string" }},
-      "economic_offer_weight_over_70_points": {{ "applies": true | false | null, "evidence": "string" }}
+      "place_of_execution_not_asturias": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "execution_period_under_2_months": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "maintenance_longer_than_1_year": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "asks_technical_assistance_service": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "iso_certification_required": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "ens_certification_required": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "pmi_certified_profile_required": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }},
+      "economic_offer_weight_over_70_points": {{ "applies": true | false | null, "evidence": "string", "pages": null | [1, 2] }}
     }}
   }}
 }}
 
-For "criteria_flags", set "applies" to true only if the documents clearly indicate that condition; false if clearly not; null if you cannot determine.
+Page provenance rules (strict):
+- Only list page numbers where you **found concrete supporting text or tables** for that field on those pages. Pages cite **evidence**, not the scope of a mental search.
+- If information is **absent** from the PCAP (e.g. "not mentioned", "no ISO requirement in the document"), set the paired "*_pages" / "pages" / "summary_pages" field to **null**. Do **not** fill pages with 1…N or the full document range to mean "we looked everywhere".
+- If "applies" is false because something is **not stated** in the documents, "pages" under that criterion must be **null**. If "applies" is false because the document **explicitly** states the opposite, list only the page(s) containing that explicit statement.
+- "summary_pages": only pages that directly support claims in "summary", not every page reviewed.
+- For "packages", include "pages" only for rows where budget/description text appears on identifiable pages; otherwise null.
+- In text-only mode (no reliable page boundaries), use null for all page fields.
+
+For "criteria_flags", set "applies" to true only if the documents clearly indicate that condition; false if clearly not; null if you cannot determine. Match "pages" to the rule above: null when the absence of a requirement is inferred from no mention anywhere.
 
 Special attention for discard-related screening (a professional will review final decisions):
 - Execution place not in Asturias (Principality of Asturias, Spain).
@@ -225,14 +242,25 @@ def default_enrichment_on_error(message: str) -> Dict[str, Any]:
     """Minimal structure when parsing fails."""
     return {
         "object_of_the_contract": "",
+        "object_of_the_contract_pages": None,
         "scope_of_the_work": "",
+        "scope_of_the_work_pages": None,
         "packages": None,
         "economic_solvency": "",
+        "economic_solvency_pages": None,
         "required_profiles": "",
+        "required_profiles_pages": None,
         "assessment_criteria": "",
-        "outsourcing": {"exists": None, "percentage": None, "notes": message},
+        "assessment_criteria_pages": None,
+        "outsourcing": {
+            "exists": None,
+            "percentage": None,
+            "notes": message,
+            "pages": None,
+        },
         "discard_review": {
             "summary": message,
+            "summary_pages": None,
             "potential_discard": None,
             "reasons_for_manual_review": [],
             "criteria_flags": {},

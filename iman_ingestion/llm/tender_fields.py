@@ -17,6 +17,9 @@ TOP_LEVEL_STRING_KEYS = (
     "assessment_criteria",
 )
 
+# Companion keys: 1-based PCAP page numbers (lists of distinct positive ints).
+TOP_LEVEL_PAGE_KEYS = tuple(f"{k}_pages" for k in TOP_LEVEL_STRING_KEYS)
+
 # Expected keys under discard_review.criteria_flags.
 CRITERIA_FLAG_KEYS = (
     "place_of_execution_not_asturias",
@@ -75,6 +78,36 @@ def multimodal_images_per_request() -> int:
 
 def _nonempty_str(val: Any) -> bool:
     return isinstance(val, str) and bool(val.strip())
+
+
+def _union_page_lists(*vals: Any) -> List[int] | None:
+    """Merge page-number lists into sorted distinct positive integers, or None."""
+    nums: set[int] = set()
+    for val in vals:
+        if not isinstance(val, list):
+            continue
+        for x in val:
+            if isinstance(x, int) and x > 0:
+                nums.add(x)
+            elif isinstance(x, float) and x == int(x) and x > 0:
+                nums.add(int(x))
+    return sorted(nums) if nums else None
+
+
+def _merge_top_level_pages(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
+    """Union ``*_pages`` arrays from ``batch`` into ``acc``."""
+    for key in TOP_LEVEL_STRING_KEYS:
+        pk = f"{key}_pages"
+        if pk not in batch:
+            continue
+        bval = batch.get(pk)
+        if bval is None:
+            continue
+        if not isinstance(bval, list):
+            continue
+        merged = _union_page_lists(acc.get(pk), bval)
+        if merged is not None:
+            acc[pk] = merged
 
 
 def _packages_satisfied(val: Any) -> bool:
@@ -216,6 +249,15 @@ def _merge_packages(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
         k = lab.strip().lower() if _nonempty_str(lab) else f"__idx_{len(by_label)}"
         if k in by_label:
             for fk, fv in item.items():
+                if fk == "pages" and isinstance(fv, list):
+                    prev_p = by_label[k].get("pages")
+                    merged_p = _union_page_lists(
+                        prev_p if isinstance(prev_p, list) else None,
+                        fv,
+                    )
+                    if merged_p is not None:
+                        by_label[k]["pages"] = merged_p
+                    continue
                 if fv is not None and (
                     fk not in by_label[k] or by_label[k][fk] in (None, "")
                 ):
@@ -242,6 +284,8 @@ def _merge_outsourcing(
         return
     merged = dict(cur)
     for k, v in b.items():
+        if k == "pages":
+            continue
         if v is None:
             continue
         if merge_mode == "batch_overwrites":
@@ -260,6 +304,11 @@ def _merge_outsourcing(
         elif k == "notes" and isinstance(v, str) and isinstance(merged.get(k), str):
             if v.strip() and v.strip() not in merged[k]:
                 merged[k] = f"{merged[k].strip()}\n{v.strip()}"
+    if isinstance(b.get("pages"), list):
+        merged["pages"] = _union_page_lists(
+            merged.get("pages") if isinstance(merged.get("pages"), list) else None,
+            b["pages"],
+        )
     acc["outsourcing"] = merged
 
 
@@ -287,6 +336,14 @@ def _merge_discard_review(
             merged["summary"] = b["summary"].strip()
         elif _nonempty_str(b.get("summary")) and _nonempty_str(merged.get("summary")):
             pass
+
+    if isinstance(b.get("summary_pages"), list):
+        merged["summary_pages"] = _union_page_lists(
+            merged.get("summary_pages")
+            if isinstance(merged.get("summary_pages"), list)
+            else None,
+            b["summary_pages"],
+        )
 
     for key in ("potential_discard",):
         if key not in b or b[key] is None:
@@ -333,6 +390,12 @@ def _merge_discard_review(
                     me["evidence"] = ev_b.strip()
                 elif ev_b.strip() not in ev_m:
                     me["evidence"] = f"{ev_m.strip()}\n{ev_b.strip()}"
+            pg_b = be.get("pages")
+            if isinstance(pg_b, list):
+                me["pages"] = _union_page_lists(
+                    me.get("pages") if isinstance(me.get("pages"), list) else None,
+                    pg_b,
+                )
             m_flags[key] = me
         merged["criteria_flags"] = m_flags
 
@@ -355,6 +418,8 @@ def merge_tender_partial(
       page batches refine cover-page guesses). Use for multimodal image batches.
 
     ``packages``: union by normalized label (fills empty fields on duplicate labels).
+    ``*_pages`` and nested ``pages`` / ``summary_pages``: union of distinct page
+    numbers across batches.
     ``discard_review``: reasons deduplicated; ``evidence`` appended when new.
 
     Args:
@@ -370,6 +435,7 @@ def merge_tender_partial(
         TOP_LEVEL_STRING_KEYS,
         merge_mode=merge_mode,
     )
+    _merge_top_level_pages(accumulated, batch_partial)
     _merge_packages(accumulated, batch_partial)
     _merge_outsourcing(accumulated, batch_partial, merge_mode=merge_mode)
     _merge_discard_review(accumulated, batch_partial, merge_mode=merge_mode)

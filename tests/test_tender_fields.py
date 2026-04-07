@@ -173,6 +173,16 @@ def test_partial_json_for_prompt_truncates(monkeypatch: pytest.MonkeyPatch) -> N
     assert "truncated" in s
 
 
+def test_merge_top_level_pages_union() -> None:
+    acc: dict = {"object_of_the_contract_pages": [1, 2]}
+    tf.merge_tender_partial(
+        acc,
+        {"object_of_the_contract_pages": [2, 3]},
+        merge_mode="batch_overwrites",
+    )
+    assert acc["object_of_the_contract_pages"] == [1, 2, 3]
+
+
 def test_merge_reasons_unique() -> None:
     acc = {
         "discard_review": {
