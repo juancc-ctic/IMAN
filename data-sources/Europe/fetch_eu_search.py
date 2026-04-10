@@ -65,50 +65,6 @@ _TAG_RE = re.compile(r"<[a-zA-Z][\s\S]*?>")
 
 LANGUAGES = ["en"]
 
-TOPIC_DISPLAY_FIELDS = [
-    "identifier",
-    "title",
-    "callTitle",
-    "description",
-    "furtherInformation",
-    "missionDescription",
-    "missionDetails",
-    "destinationDescription",
-    "destinationDetails",
-    "duration",
-    "summary",
-    "reference",
-    "callccm2Id",
-    "status",
-    "projectAcronym",
-    "startDate",
-    "deadlineDate",
-    "deadlineModel",
-    "frameworkProgramme",
-    "typesOfAction",
-    "keywords",
-    "tags",
-    "programmeDivision",
-    "budgetOverview",
-    "descriptionByte",
-]
-
-CALL_DISPLAY_FIELDS = [
-    "identifier",
-    "budget",
-    "title",
-    "callccm2Id",
-    "content",
-    "description",
-    "status",
-    "caName",
-    "startDate",
-    "deadlineDate",
-    "deadlineModel",
-    "esDA_FirstIngestDate",
-    "furtherInformation",
-]
-
 SORT_TOPICS = {"order": "ASC", "field": "title"}
 SORT_CALLS = {"order": "ASC", "field": "caName"}
 
@@ -169,6 +125,16 @@ QUERY_HORIZON_CALLS: Mapping[str, Any] = {
 }
 
 
+TOPIC_PORTAL_URL = (
+    "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+    "screen/opportunities/topic-details/{identifier}"
+)
+CALL_PORTAL_URL = (
+    "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+    "screen/opportunities/competitive-calls-cs/{callccm2Id}"
+)
+
+
 @dataclass(frozen=True)
 class DatasetConfig:
     """One Search API profile and output filename."""
@@ -176,9 +142,9 @@ class DatasetConfig:
     key: str
     filename: str
     query: Mapping[str, Any]
-    display_fields: List[str]
     sort: Mapping[str, Any]
     source_label: str
+    url_template: Optional[str] = None
 
 
 DATASETS: Dict[str, DatasetConfig] = {
@@ -186,25 +152,25 @@ DATASETS: Dict[str, DatasetConfig] = {
         key="horizon-topics",
         filename="Horizon-topics.json",
         query=QUERY_HORIZON_TOPICS,
-        display_fields=list(TOPIC_DISPLAY_FIELDS),
         sort=SORT_TOPICS,
         source_label="fetch_horizon_topics",
+        url_template=TOPIC_PORTAL_URL,
     ),
     "non-horizon-topics": DatasetConfig(
         key="non-horizon-topics",
         filename="Non-Horizon-topics.json",
         query=QUERY_NON_HORIZON_TOPICS,
-        display_fields=list(TOPIC_DISPLAY_FIELDS),
         sort=SORT_TOPICS,
         source_label="fetch_non_horizon_topics",
+        url_template=TOPIC_PORTAL_URL,
     ),
     "horizon-calls": DatasetConfig(
         key="horizon-calls",
         filename="Horizon-calls.json",
         query=QUERY_HORIZON_CALLS,
-        display_fields=list(CALL_DISPLAY_FIELDS),
         sort=SORT_CALLS,
         source_label="fetch_eu_calls",
+        url_template=CALL_PORTAL_URL,
     ),
 }
 
@@ -212,17 +178,12 @@ DATASETS: Dict[str, DatasetConfig] = {
 def _multipart_json_parts(
     query: Mapping[str, Any],
     languages: List[str],
-    display_fields: List[str],
     sort: Mapping[str, Any],
 ) -> List[tuple]:
     """Build multipart parts with application/json content types."""
     return [
         ("query", (None, json.dumps(query, separators=(",", ":")), JSON_PART)),
         ("languages", (None, json.dumps(languages), JSON_PART)),
-        (
-            "displayFields",
-            (None, json.dumps(display_fields), JSON_PART),
-        ),
         ("sort", (None, json.dumps(sort, separators=(",", ":")), JSON_PART)),
     ]
 
@@ -416,11 +377,74 @@ def parse_budget_scalar(raw: Any) -> Optional[int]:
     return None
 
 
+def extract_type_of_mga_descriptions(actions_raw: Any) -> Optional[Any]:
+    """Extract ``typeOfMGA[].description`` values from metadata ``actions``.
+
+    The API usually provides ``actions`` as a JSON-encoded string (or a list of
+    JSON-encoded strings). This helper parses that payload and returns unique
+    description values while preserving the original order.
+    """
+    if actions_raw is None:
+        return None
+
+    action_payloads: List[Any] = []
+    if isinstance(actions_raw, str):
+        action_payloads = [actions_raw]
+    elif isinstance(actions_raw, list):
+        action_payloads = actions_raw
+    else:
+        return None
+
+    descriptions: List[str] = []
+    seen: set[str] = set()
+
+    for payload in action_payloads:
+        parsed_payload: Any = payload
+        if isinstance(payload, str):
+            try:
+                parsed_payload = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(parsed_payload, list):
+            continue
+
+        for action in parsed_payload:
+            if not isinstance(action, dict):
+                continue
+            types = action.get("types")
+            if not isinstance(types, list):
+                continue
+            for type_item in types:
+                if not isinstance(type_item, dict):
+                    continue
+                mga_entries = type_item.get("typeOfMGA")
+                if not isinstance(mga_entries, list):
+                    continue
+                for mga in mga_entries:
+                    if not isinstance(mga, dict):
+                        continue
+                    description = mga.get("description")
+                    if (
+                        isinstance(description, str)
+                        and description
+                        and description not in seen
+                    ):
+                        descriptions.append(description)
+                        seen.add(description)
+
+    if not descriptions:
+        return None
+    if len(descriptions) == 1:
+        return descriptions[0]
+    return descriptions
+
+
 def normalize_hit(
     hit: Mapping[str, Any],
     *,
     parse_budget_overview_field: bool,
     strip_html_fields: bool = True,
+    url_template: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Merge top-level hit fields with flattened metadata.
 
@@ -428,6 +452,8 @@ def normalize_hit(
         hit: One element of API ``results``.
         parse_budget_overview_field: If True, add ``budgetOverviewParsed``.
         strip_html_fields: If True, convert HTML metadata to plain text.
+        url_template: If provided, build ``url`` from this template using
+            metadata fields (e.g. ``{identifier}``).
 
     Returns:
         Normalized record.
@@ -457,9 +483,22 @@ def normalize_hit(
         if parsed_b is not None:
             flat["budgetParsed"] = parsed_b
 
+    if "actions" in flat:
+        mga_desc = extract_type_of_mga_descriptions(flat.get("actions"))
+        if mga_desc is not None:
+            flat["typeOfMGADescription"] = mga_desc
+
+    if url_template:
+        try:
+            url: Optional[str] = url_template.format(**flat)
+        except KeyError:
+            url = hit.get("url")
+    else:
+        url = hit.get("url")
+
     out: Dict[str, Any] = {
         "reference": hit.get("reference"),
-        "url": hit.get("url"),
+        "url": url,
         "summary": hit.get("summary"),
         "metadata": flat,
     }
@@ -495,9 +534,7 @@ def fetch_all_pages(
     Raises:
         RuntimeError: If total_results is inconsistent or max_pages exceeded.
     """
-    parts = _multipart_json_parts(
-        cfg.query, LANGUAGES, cfg.display_fields, cfg.sort
-    )
+    parts = _multipart_json_parts(cfg.query, LANGUAGES, cfg.sort)
     all_results: List[Dict[str, Any]] = []
     total_results: Optional[int] = None
     page_number = 1
@@ -574,6 +611,7 @@ def build_output_document(
                 hit,
                 parse_budget_overview_field=parse_budget_overview_field,
                 strip_html_fields=strip_html_fields,
+                url_template=cfg.url_template,
             )
             for hit in raw_results
         ]

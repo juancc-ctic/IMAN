@@ -80,3 +80,33 @@ class DocumentChunk(Base):
     )
 
     tender: Mapped["Tender"] = relationship("Tender", back_populates="chunks")
+
+
+class EuItem(Base):
+    """One EU Funding & Tenders item (topic or call) with a single embedding vector."""
+
+    __tablename__ = "eu_items"
+
+    reference: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))  # horizon-topic | non-horizon-topic | horizon-call
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    identifier: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    start_date: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    deadline_date: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    item_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column("metadata", JSONB, nullable=True)
+    embed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(_embedding_dimensions()),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

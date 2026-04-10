@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -52,7 +52,6 @@ class ImanIngestionResource(ConfigurableResource):
         cutoff_raw = os.environ.get("IMAN_CUTOFF_DATE", self.cutoff_date or "")
         max_tries = int(os.environ.get("IMAN_MAX_TRIES", str(self.max_tries)))
 
-        cutoff = None
         if cutoff_raw:
             from iman_ingestion.aggregated.ingestion import parse_cutoff_datetime
 
@@ -62,6 +61,11 @@ class ImanIngestionResource(ConfigurableResource):
             else:
                 cu = cu.astimezone(timezone.utc)
             cutoff = cu
+        else:
+            # Default to the start of today (UTC) so the pipeline always ingests
+            # only current-day entries and paginates through all of today's pages.
+            now = datetime.now(tz=timezone.utc)
+            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         return IngestionConfig(
             atom_source=atom,
