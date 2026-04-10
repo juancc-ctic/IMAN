@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,10 +18,13 @@ from iman_ingestion.aggregated.ingestion import (
 from iman_ingestion.db.models import DocumentChunk, Tender
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.llm.client import (
+    IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
     analyze_tender_proposal,
+    chat_model_name,
     embed_texts,
     get_embeddings_client,
     get_llm_client,
+    resolved_llm_base_url,
 )
 from iman_ingestion.llm.pdf_to_images import (
     convert_pdf_to_base64_pngs,
@@ -130,20 +134,50 @@ def persist_tenders(
 
 @asset(group_name="iman", compute_kind="openai")
 def tender_llm_enrichment(
+    context,
     persist_tenders: int,
     raw_aggregated_ingestion: Dict[str, Any],
 ) -> int:
     """Fill ``tenders.enrichment`` via multimodal LLM (PCAP pages as PNG) or text fallback."""
     if os.environ.get("IMAN_SKIP_LLM_ENRICHMENT", "").lower() in ("1", "true", "yes"):
+        context.log.info("IMAN_SKIP_LLM_ENRICHMENT is set; skipping LLM enrichment.")
         return 0
     downloads = Path(raw_aggregated_ingestion["downloads_dir"])
+    mm_env = os.environ.get("IMAN_USE_MULTIMODAL_LLM", "true")
+    context.log.info(
+        "tender_llm_enrichment: model=%r base_url=%r IMAN_USE_MULTIMODAL_LLM=%r "
+        "downloads=%s",
+        chat_model_name(),
+        resolved_llm_base_url(),
+        mm_env,
+        downloads,
+    )
     llm_client = get_llm_client()
     updated = 0
+    pipeline_start = time.perf_counter()
     with session_scope() as session:
         tenders = list(session.scalars(select(Tender)).all())
-        for t in tenders:
+        n = len(tenders)
+        context.log.info("Enriching %d tender row(s).", n)
+        for i, t in enumerate(tenders, start=1):
+            folder = folder_name_from_tender_id(t.id)
+            pcap_path = downloads / folder / "PCAP.pdf"
+            t0 = time.perf_counter()
             pdf_text = _collect_tender_pdf_text(downloads, t.id)
             images = _collect_tender_image_base64s(downloads, t.id)
+            use_mm = mm_env.lower() not in ("0", "false", "no") and bool(images)
+            context.log.info(
+                "[%d/%d] folder=%s PCAP_exists=%s pdf_text_chars=%d raster_pages=%d "
+                "use_multimodal=%s title=%r",
+                i,
+                n,
+                folder,
+                pcap_path.is_file(),
+                len(pdf_text),
+                len(images),
+                use_mm,
+                (t.title or "")[:120],
+            )
             data = analyze_tender_proposal(
                 llm_client,
                 pdf_text=pdf_text,
@@ -152,8 +186,45 @@ def tender_llm_enrichment(
                 party_name=t.party_name or "",
                 tender_link=t.link or "",
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            pages_meta = data.get(IMAN_ENRICHMENT_TOTAL_PAGES_KEY)
+            if data.get("parse_error"):
+                note = (
+                    (data.get("outsourcing") or {}).get("notes")
+                    or (data.get("discard_review") or {}).get("summary")
+                    or ""
+                )
+                context.log.warning(
+                    "[%d/%d] completed in %.0f ms (pages_meta=%s) parse_error=True "
+                    "detail=%r",
+                    i,
+                    n,
+                    elapsed_ms,
+                    pages_meta,
+                    note[:500],
+                )
+            else:
+                context.log.info(
+                    "[%d/%d] completed in %.0f ms (pages_meta=%s)",
+                    i,
+                    n,
+                    elapsed_ms,
+                    pages_meta,
+                )
             t.enrichment = data
             updated += 1
+    total_s = time.perf_counter() - pipeline_start
+    context.log.info(
+        "tender_llm_enrichment finished: enriched=%d in %.2f s",
+        updated,
+        total_s,
+    )
+    context.add_output_metadata(
+        {
+            "tenders_enriched": updated,
+            "total_seconds": round(total_s, 3),
+        }
+    )
     return updated
 
 

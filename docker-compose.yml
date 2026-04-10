@@ -35,7 +35,8 @@ services:
       IMAN_DATA_DIR: /data
       IMAN_ATOM_SOURCE: ${IMAN_ATOM_SOURCE:-}
       IMAN_CUTOFF_DATE: ${IMAN_CUTOFF_DATE:-}
-      IMAN_MAX_TRIES: ${IMAN_MAX_TRIES:-0}
+      # Same cap as CLI `download_aggregated_docs.py --try N` (0 = no limit).
+      IMAN_MAX_TRIES: ${IMAN_MAX_TRIES:-5}
       EMBEDDINGS_API_BASE: ${EMBEDDINGS_API_BASE:-http://192.168.4.32:8116/v1}
       EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-Snowflake/snowflake-arctic-embed-l-v2.0}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://192.168.4.32:4000/v1}
