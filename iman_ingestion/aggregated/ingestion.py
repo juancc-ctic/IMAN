@@ -353,11 +353,9 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
         "estimated_overall_contract_amount": None,
     }
 
-    summary_el = entry_el.find(f".//{ATOM}summary")
-    if summary_el is not None:
-        m = re.search(r"Id licitaci[oó]n:\s*([^;]+)", summary_el.text or "")
-        if m:
-            data["id"] = m.group(1).strip()
+    id_el = entry_el.find(f".//{ATOM}id")
+    if id_el is not None:
+        data["id"] = (id_el.text or "").strip()
 
     title_el = entry_el.find(f".//{ATOM}title")
     if title_el is not None:
