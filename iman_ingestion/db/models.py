@@ -38,6 +38,11 @@ class Tender(Base):
         nullable=True,
     )
     enrichment: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary_embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(_embedding_dimensions()),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

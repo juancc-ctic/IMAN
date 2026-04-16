@@ -6,16 +6,16 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from dagster import asset
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from iman_ingestion.aggregated.ingestion import (
     folder_name_from_tender_id,
     run_ingestion,
 )
-from iman_ingestion.db.models import DocumentChunk, Tender
+from iman_ingestion.db.models import Tender
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.llm.client import (
     IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
@@ -32,7 +32,7 @@ from iman_ingestion.llm.pdf_to_images import (
     multimodal_max_images_total,
     multimodal_max_pages_per_pdf,
 )
-from iman_ingestion.pdf_extract import chunk_text, extract_pdf_text
+from iman_ingestion.pdf_extract import extract_pdf_text
 from iman_ingestion.resources import ImanIngestionResource
 
 
@@ -233,7 +233,7 @@ def document_embeddings(
     raw_aggregated_ingestion: Dict[str, Any],
     tender_llm_enrichment: int,
 ) -> int:
-    """Extract PDF text, chunk, embed, and store rows in ``document_chunks``."""
+    """Embed each tender's LLM-generated summary and store it in ``tenders``."""
     if os.environ.get("IMAN_SKIP_EMBEDDINGS", "").lower() in ("1", "true", "yes"):
         return 0
     downloads = Path(raw_aggregated_ingestion["downloads_dir"])
@@ -248,64 +248,16 @@ def document_embeddings(
             tid = row.get("id")
             if not tid:
                 continue
-            folder = folder_name_from_tender_id(tid)
-            base = downloads / folder
-            pdf_parts: List[Tuple[str, str]] = []
-            for name in ("PCAP.pdf", "PPT.pdf"):
-                p = base / name
-                if p.is_file():
-                    try:
-                        txt = extract_pdf_text(p)
-                    except Exception as exc:
-                        context_msg = f"pdf_extract_failed:{folder}:{name}:{exc}"
-                        raise RuntimeError(context_msg) from exc
-                    if txt.strip():
-                        pdf_parts.append((name, txt))
-            meta_lines = [
-                row.get("title") or "",
-                row.get("party_name") or "",
-                row.get("tax_exclusive_amount") or "",
-            ]
-            meta_text = "\n".join(meta_lines)
-            all_chunks: List[Tuple[str, Optional[str], int, str]] = []
-            idx = 0
-            if meta_text.strip():
-                for c in chunk_text(meta_text, size=1500, overlap=100):
-                    all_chunks.append(("metadata", None, idx, c))
-                    idx += 1
-            for fname, text in pdf_parts:
-                for c in chunk_text(text, size=2000, overlap=200):
-                    all_chunks.append(("pdf", fname, idx, c))
-                    idx += 1
+            tender_db = session.get(Tender, tid)
+            if not (tender_db and isinstance(tender_db.enrichment, dict)):
+                continue
+            summary = tender_db.enrichment.get("summary", "").strip()
+            if not summary:
+                continue
 
-            session.execute(
-                delete(DocumentChunk).where(DocumentChunk.tender_id == tid),
-            )
-            for kind, fname, chunk_i, text in all_chunks:
-                session.add(
-                    DocumentChunk(
-                        tender_id=tid,
-                        source_kind=kind,
-                        source_filename=fname,
-                        chunk_index=chunk_i,
-                        text=text,
-                    )
-                )
-                total_chunks += 1
-
-            session.flush()
-            pending = list(
-                session.scalars(
-                    select(DocumentChunk)
-                    .where(DocumentChunk.tender_id == tid)
-                    .order_by(DocumentChunk.chunk_index),
-                ).all(),
-            )
-            texts = [c.text for c in pending]
-            for off in range(0, len(texts), batch_size):
-                batch = texts[off : off + batch_size]
-                vecs = embed_texts(embeddings_client, batch)
-                for chunk, vec in zip(pending[off : off + batch_size], vecs):
-                    chunk.embedding = vec
+            vecs = embed_texts(embeddings_client, [summary])
+            tender_db.summary = summary
+            tender_db.summary_embedding = vecs[0]
+            total_chunks += 1
 
     return total_chunks

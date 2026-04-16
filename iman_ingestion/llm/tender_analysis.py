@@ -23,6 +23,7 @@ _TENDER_JSON_SCHEMA_AND_RULES = """
 Extract and return a JSON object with exactly this structure (all string values in the language of the documents when possible, or Spanish/English as appropriate):
 
 {{
+  "summary": "string: 2–4 sentences describing this tender for semantic search; cover what is being contracted, the main technology/service domain, required professional profiles, and the rough budget; write in the language of the documents (Spanish preferred)",
   "object_of_the_contract": "string: what is being contracted",
   "object_of_the_contract_pages": null | [1, 2],
   "scope_of_the_work": "string: main scope and deliverables",
@@ -238,9 +239,44 @@ def build_tender_analysis_user_message(
 """
 
 
+def build_summary_synthesis_user_message(
+    *,
+    title: str,
+    party_name: str,
+    tender_link: str,
+    fields_json: str,
+) -> str:
+    """User message to synthesize a semantic summary from already-extracted fields.
+
+    Called after all page batches complete so the summary reflects the full
+    tender rather than only the first batch of pages.
+
+    Args:
+        title: Tender title from Atom metadata.
+        party_name: Contracting party name.
+        tender_link: Detail URL.
+        fields_json: JSON string of the semantic fields extracted so far.
+
+    Returns:
+        User message string requesting only {\"summary\": \"...\"}
+    """
+    return f"""Based on the structured analysis below, write a 2–4 sentence summary of this tender optimised for semantic search and embedding. Capture what is being contracted, the main technology or service domain, required professional profiles, and the rough budget.
+
+{_metadata_block(title, party_name, tender_link)}
+Extracted tender fields:
+{fields_json}
+
+Return a single JSON object with only one key:
+{{"summary": "..."}}
+
+Write in the language of the documents (Spanish preferred). No markdown fences, no commentary.
+"""
+
+
 def default_enrichment_on_error(message: str) -> Dict[str, Any]:
     """Minimal structure when parsing fails."""
     return {
+        "summary": "",
         "object_of_the_contract": "",
         "object_of_the_contract_pages": None,
         "scope_of_the_work": "",

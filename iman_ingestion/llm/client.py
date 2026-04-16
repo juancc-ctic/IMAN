@@ -11,6 +11,7 @@ from openai import OpenAI
 
 from iman_ingestion.llm.tender_analysis import (
     TENDER_ANALYSIS_SYSTEM_PROMPT,
+    build_summary_synthesis_user_message,
     build_tender_analysis_user_message,
     build_tender_multimodal_batch_user_message,
     build_tender_multimodal_user_message,
@@ -150,6 +151,62 @@ def _return_tender_analysis(
     return out
 
 
+def _synthesize_summary(
+    client: OpenAI,
+    accumulated: Dict[str, Any],
+    *,
+    title: str,
+    party_name: str,
+    tender_link: str,
+) -> None:
+    """Fill ``accumulated['summary']`` from already-extracted fields; no-op if already set.
+
+    Makes one small LLM call using only the semantic fields (no images), so
+    the summary reflects the complete tender rather than just the first batch.
+    Silently swallows errors — summary is best-effort.
+    """
+    if isinstance(accumulated.get("summary"), str) and accumulated["summary"].strip():
+        return
+    semantic_keys = (
+        "object_of_the_contract",
+        "scope_of_the_work",
+        "packages",
+        "required_profiles",
+        "assessment_criteria",
+    )
+    fields = {k: accumulated[k] for k in semantic_keys if k in accumulated}
+    # Need at least one substantive field to synthesize from.
+    if not any(
+        isinstance(fields.get(k), str) and fields[k].strip()
+        for k in ("object_of_the_contract", "scope_of_the_work")
+    ):
+        return
+    try:
+        fields_json = json.dumps(fields, ensure_ascii=False, indent=2)
+        user_msg = build_summary_synthesis_user_message(
+            title=title,
+            party_name=party_name,
+            tender_link=tender_link,
+            fields_json=fields_json,
+        )
+        completion = client.chat.completions.create(
+            model=chat_model_name(),
+            messages=[
+                {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.15,
+        )
+        raw = completion.choices[0].message.content or "{}"
+        parsed = _parse_llm_json_object(raw)
+        if isinstance(parsed, dict):
+            s = parsed.get("summary")
+            if isinstance(s, str) and s.strip():
+                accumulated["summary"] = s.strip()
+    except Exception:
+        pass  # Best-effort: don't propagate synthesis failures
+
+
 def analyze_tender_proposal(
     client: OpenAI,
     *,
@@ -214,6 +271,10 @@ def analyze_tender_proposal(
                 batch_index = 0
                 while start < len(images):
                     if all_required_satisfied(accumulated):
+                        _synthesize_summary(
+                            client, accumulated,
+                            title=title, party_name=party_name, tender_link=tender_link,
+                        )
                         return _return_tender_analysis(
                             accumulated,
                             total_pages_processed=page_count,
@@ -225,6 +286,10 @@ def analyze_tender_proposal(
                     start += len(chunk)
                     missing = list_missing_field_labels(accumulated)
                     if not missing:
+                        _synthesize_summary(
+                            client, accumulated,
+                            title=title, party_name=party_name, tender_link=tender_link,
+                        )
                         return _return_tender_analysis(
                             accumulated,
                             total_pages_processed=page_count,
@@ -278,6 +343,10 @@ def analyze_tender_proposal(
                         merge_mode="batch_overwrites",
                     )
                     if all_required_satisfied(accumulated):
+                        _synthesize_summary(
+                            client, accumulated,
+                            title=title, party_name=party_name, tender_link=tender_link,
+                        )
                         return _return_tender_analysis(
                             accumulated,
                             total_pages_processed=page_count,
@@ -318,6 +387,10 @@ def analyze_tender_proposal(
                         except json.JSONDecodeError:
                             partial = {}
                         merge_tender_partial(accumulated, partial)
+                _synthesize_summary(
+                    client, accumulated,
+                    title=title, party_name=party_name, tender_link=tender_link,
+                )
                 return _return_tender_analysis(
                     accumulated,
                     total_pages_processed=page_count,
