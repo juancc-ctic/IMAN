@@ -286,7 +286,6 @@ def extract_technical_documents_from_entry(
 
 
 def folder_name_from_tender_id(tender_id: str) -> str:
-    """Match :func:`get_entry_folder_name` logic for a stored tender id URL."""
     raw = (tender_id or "").strip()
     if "/" in raw:
         return raw.rsplit("/", 1)[-1].strip() or "unknown"
@@ -355,7 +354,8 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
 
     id_el = entry_el.find(f".//{ATOM}id")
     if id_el is not None:
-        data["id"] = (id_el.text or "").strip()
+        raw_id = (id_el.text or "").strip()
+        data["id"] = raw_id.rsplit("/", 1)[-1] if "/" in raw_id else raw_id
 
     title_el = entry_el.find(f".//{ATOM}title")
     if title_el is not None:

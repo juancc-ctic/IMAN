@@ -28,7 +28,7 @@ class Tender(Base):
 
     __tablename__ = "tenders"
 
-    id: Mapped[str] = mapped_column(String(2048), primary_key=True)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
     link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     party_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -67,7 +67,7 @@ class DocumentChunk(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tender_id: Mapped[str] = mapped_column(
-        String(2048),
+        String(64),
         ForeignKey("tenders.id", ondelete="CASCADE"),
         index=True,
     )
