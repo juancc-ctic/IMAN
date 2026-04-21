@@ -22,6 +22,7 @@ from iman_ingestion.assets.pipeline import (
     persist_tenders,
     raw_aggregated_ingestion,
     tender_llm_enrichment,
+    tender_triage,
 )
 from iman_ingestion.resources import ImanIngestionResource
 
@@ -67,6 +68,7 @@ defs = Definitions(
         raw_aggregated_ingestion,
         persist_tenders,
         tender_llm_enrichment,
+        tender_triage,
         document_embeddings,
         raw_eu_ingestion,
         persist_eu_items,

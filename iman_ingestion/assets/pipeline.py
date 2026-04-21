@@ -229,6 +229,76 @@ def tender_llm_enrichment(
 
 
 @asset(group_name="iman", compute_kind="openai")
+def tender_triage(
+    context,
+    tender_llm_enrichment: int,
+) -> int:
+    """Evaluate each enriched tender against the company profile and assign a triage status."""
+    if os.environ.get("IMAN_SKIP_TRIAGE", "").lower() in ("1", "true", "yes"):
+        context.log.info("IMAN_SKIP_TRIAGE is set; skipping triage.")
+        return 0
+
+    from iman_ingestion.triage import evaluate_tender, load_company_profile
+
+    company_profile = load_company_profile()
+    llm_client = get_llm_client()
+    pipeline_start = time.perf_counter()
+    counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
+
+    with session_scope() as session:
+        tenders = list(session.scalars(select(Tender)).all())
+        n = len(tenders)
+        context.log.info(
+            "tender_triage: evaluating %d tender(s); model=%r",
+            n,
+            chat_model_name(),
+        )
+        for i, t in enumerate(tenders, start=1):
+            t0 = time.perf_counter()
+            try:
+                result = evaluate_tender(
+                    tender_id=t.id,
+                    title=t.title or "",
+                    party_name=t.party_name or "",
+                    tender_link=t.link or "",
+                    enrichment=t.enrichment,
+                    llm_client=llm_client,
+                    company_profile=company_profile,
+                )
+            except Exception as exc:
+                context.log.warning("[%d/%d] triage failed for %r: %s", i, n, t.id, exc)
+                counters["skipped"] += 1
+                continue
+            t.triage = result
+            t.triage_status = result.get("status")
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            context.log.info(
+                "[%d/%d] id=%r status=%r score=%s elapsed=%.0f ms",
+                i,
+                n,
+                t.id,
+                result.get("status"),
+                result.get("overall_score"),
+                elapsed_ms,
+            )
+            status_key = result.get("status", "neutral")
+            counters[status_key] = counters.get(status_key, 0) + 1
+
+    total_s = time.perf_counter() - pipeline_start
+    context.log.info("tender_triage finished in %.2f s: %s", total_s, counters)
+    context.add_output_metadata(
+        {
+            "recommended": counters["recommended"],
+            "neutral": counters["neutral"],
+            "potential_discard": counters["potential_discard"],
+            "skipped": counters["skipped"],
+            "total_seconds": round(total_s, 3),
+        }
+    )
+    return counters["recommended"] + counters["neutral"] + counters["potential_discard"]
+
+
+@asset(group_name="iman", compute_kind="openai")
 def document_embeddings(
     raw_aggregated_ingestion: Dict[str, Any],
     tender_llm_enrichment: int,

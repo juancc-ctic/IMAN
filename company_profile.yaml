@@ -1,0 +1,29 @@
+# IMAN Company Profile — edit to match your organization's interests.
+# Reload takes effect on the next pipeline run (no Dagster restart needed).
+# Override the path with IMAN_COMPANY_PROFILE_PATH if you store this elsewhere.
+
+interest_areas:
+  - "Desarrollo de software a medida y plataformas digitales para AAPP"
+  - "Inteligencia artificial, aprendizaje automático y procesamiento del lenguaje natural"
+  - "Ciberseguridad, ENS y cumplimiento normativo (RGPD)"
+  - "Transformación digital de administraciones y servicios públicos"
+  - "Computación cuántica e infraestructuras HPC"
+  - "Infraestructura cloud, DevOps e integración de sistemas"
+  - "Experiencia de usuario (UX), accesibilidad y diseño de servicios digitales"
+  - "Datos abiertos, interoperabilidad y gobierno del dato"
+
+company_fields:
+  - "Tecnologías de la información y las comunicaciones (TIC)"
+  - "Investigación, Desarrollo e Innovación (I+D+i)"
+  - "Consultoría y asesoramiento tecnológico"
+  - "Formación y capacitación tecnológica"
+  - "Transferencia de conocimiento y tecnología"
+
+past_tender_categories:
+  - "Desarrollo y mantenimiento de plataformas digitales para administraciones públicas"
+  - "Consultoría e implantación de soluciones de inteligencia artificial"
+  - "Proyectos de investigación europeos (Horizonte Europa, H2020)"
+  - "Servicios de ciberseguridad y auditoría ENS"
+  - "Formación en competencias digitales para empleados públicos"
+  - "Diseño y desarrollo de portales web accesibles"
+  - "Análisis de datos y cuadros de mando para AAPP"

@@ -43,6 +43,8 @@ class Tender(Base):
         Vector(_embedding_dimensions()),
         nullable=True,
     )
+    triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    triage_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
