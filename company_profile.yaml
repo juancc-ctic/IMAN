@@ -3,21 +3,30 @@
 # Override the path with IMAN_COMPANY_PROFILE_PATH if you store this elsewhere.
 
 interest_areas:
-  - "Desarrollo de software a medida y plataformas digitales para AAPP"
-  - "Inteligencia artificial, aprendizaje automático y procesamiento del lenguaje natural"
+  - "Inteligencia artificial, machine learning y procesamiento del lenguaje natural aplicados a industria y servicios"
+  - "Computación cuántica: simulación, algoritmos de optimización y criptografía cuántica"
+  - "Internet de las Cosas (IoT) y territorios inteligentes: smart villages, agricultura de precisión, redes de sensores"
+  - "Espacios de datos, gobernanza del dato y data marketplaces (GAIA-X, DataHub)"
+  - "Salud digital, teleasistencia, envejecimiento activo y soluciones de atención domiciliaria"
+  - "Energía: comunidades energéticas locales, micro-redes, respuesta a la demanda y blockchain energético"
+  - "Estándares web, accesibilidad (WCAG), Web of Things y portales de datos abiertos"
   - "Ciberseguridad, ENS y cumplimiento normativo (RGPD)"
-  - "Transformación digital de administraciones y servicios públicos"
-  - "Computación cuántica e infraestructuras HPC"
-  - "Infraestructura cloud, DevOps e integración de sistemas"
-  - "Experiencia de usuario (UX), accesibilidad y diseño de servicios digitales"
-  - "Datos abiertos, interoperabilidad y gobierno del dato"
+  - "Transformación digital de administraciones públicas y PYMES"
+  - "Desarrollo de plataformas digitales, microservicios e integración de sistemas"
+  - "Realidad aumentada y mixta (WebXR) para formación, salud y turismo"
+  - "Inteligencia territorial: sistemas GIS, análisis climático y laboratorios vivientes (living labs)"
 
 company_fields:
   - "Tecnologías de la información y las comunicaciones (TIC)"
   - "Investigación, Desarrollo e Innovación (I+D+i)"
+  - "Inteligencia artificial y computación avanzada"
+  - "Internet de las Cosas (IoT) y sistemas embebidos"
   - "Consultoría y asesoramiento tecnológico"
   - "Formación y capacitación tecnológica"
   - "Transferencia de conocimiento y tecnología"
+  - "Salud digital y tecnologías para el bienestar"
+  - "Energía inteligente y sostenibilidad"
+  - "Estándares web y accesibilidad (W3C)"
 
 past_tender_categories:
   - "Desarrollo y mantenimiento de plataformas digitales para administraciones públicas"
@@ -27,3 +36,8 @@ past_tender_categories:
   - "Formación en competencias digitales para empleados públicos"
   - "Diseño y desarrollo de portales web accesibles"
   - "Análisis de datos y cuadros de mando para AAPP"
+  - "Proyectos IoT y despliegue de redes de sensores para territorios inteligentes"
+  - "Soluciones de salud digital y telemonitorización de pacientes"
+  - "Pilotos de comunidades energéticas locales y gestión de micro-redes"
+  - "Espacios de datos federados y plataformas de interoperabilidad"
+  - "Simulación y experimentación con computación cuántica"
