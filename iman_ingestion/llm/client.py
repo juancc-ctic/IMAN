@@ -105,7 +105,7 @@ def embed_texts(client: OpenAI, texts: Sequence[str]) -> List[List[float]]:
     return [item.embedding for item in response.data]
 
 
-def _parse_llm_json_object(raw: str) -> Dict[str, Any]:
+def parse_llm_json_object(raw: str) -> Dict[str, Any]:
     """Strip optional markdown fences and parse JSON."""
     text = raw.strip()
     if text.startswith("```"):
@@ -198,7 +198,7 @@ def _synthesize_summary(
             temperature=0.15,
         )
         raw = completion.choices[0].message.content or "{}"
-        parsed = _parse_llm_json_object(raw)
+        parsed = parse_llm_json_object(raw)
         if isinstance(parsed, dict):
             s = parsed.get("summary")
             if isinstance(s, str) and s.strip():
@@ -332,7 +332,7 @@ def analyze_tender_proposal(
                     )
                     raw = completion.choices[0].message.content or "{}"
                     try:
-                        partial = _parse_llm_json_object(raw)
+                        partial = parse_llm_json_object(raw)
                         if not isinstance(partial, dict):
                             partial = {}
                     except json.JSONDecodeError:
@@ -381,7 +381,7 @@ def analyze_tender_proposal(
                         )
                         raw = completion.choices[0].message.content or "{}"
                         try:
-                            partial = _parse_llm_json_object(raw)
+                            partial = parse_llm_json_object(raw)
                             if not isinstance(partial, dict):
                                 partial = {}
                         except json.JSONDecodeError:
@@ -415,7 +415,7 @@ def analyze_tender_proposal(
         raw = completion.choices[0].message.content or "{}"
         try:
             return _return_tender_analysis(
-                _parse_llm_json_object(raw),
+                parse_llm_json_object(raw),
                 total_pages_processed=page_count,
             )
         except json.JSONDecodeError as exc:

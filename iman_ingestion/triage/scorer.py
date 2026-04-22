@@ -7,7 +7,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from iman_ingestion.llm.client import _parse_llm_json_object, chat_model_name
+from iman_ingestion.llm.client import parse_llm_json_object, chat_model_name
 from iman_ingestion.triage.company_profile import CompanyProfile
 from iman_ingestion.triage.triage_prompt import TRIAGE_SYSTEM_PROMPT, build_triage_user_message
 
@@ -51,10 +51,10 @@ def _extract_flags(enrichment: dict[str, Any]) -> tuple[list[str], list[str]]:
 
 
 def _scope_score(scope_matches: bool, scope_fields: list[str]) -> float:
-    """Graduated scope score: -3 (no match) → 10 (strong match, 5+ fields)."""
+    """Graduated scope score based on number of matching fields (0–10)."""
     n = len(scope_fields)
     if n == 0:
-        return -3.0 if not scope_matches else 3.0
+        return 3.0  # scope_matches is True here; early-exit guards the no-match case
     if n <= 2:
         return 4.0
     if n <= 4:
@@ -107,9 +107,9 @@ def evaluate_tender(
             "overall_score": 0.0,
             "interest_match": {
                 "score": None,
-                "reasoning": f"Descarte automático por bloqueo duro: {blocker_str}.",
+                "reasoning": f"Descarte automático por: {blocker_str}.",
             },
-            "scope_match": {"matches": None, "matching_fields": [], "reasoning": "No evaluado (bloqueo duro)."},
+            "scope_match": {"matches": None, "matching_fields": [], "reasoning": "No evaluado."},
             "discard_flags_triggered": hard_blockers,
             "human_summary": f"Descartada automáticamente por: {blocker_str}.",
         }
@@ -133,7 +133,7 @@ def evaluate_tender(
             temperature=_TRIAGE_TEMPERATURE,
         )
         raw_content = response.choices[0].message.content or ""
-        result = _parse_llm_json_object(raw_content)
+        result = parse_llm_json_object(raw_content)
     except Exception as exc:
         logger.warning("Triage LLM parse failed for %r: %s | raw=%r", tender_id, exc, raw_content[:300])
         result = {}

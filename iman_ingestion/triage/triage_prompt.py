@@ -9,6 +9,12 @@ from iman_ingestion.triage.company_profile import CompanyProfile
 
 _MAX_FIELD_CHARS = 2000
 
+
+def _cap(text: str | None) -> str:
+    s = (text or "").strip()
+    return s[:_MAX_FIELD_CHARS] if len(s) > _MAX_FIELD_CHARS else s
+
+
 TRIAGE_SYSTEM_PROMPT = """\
 Eres un asistente de triaje de licitaciones públicas desplegado en un centro tecnológico español. \
 Tu misión es evaluar si una licitación pública encaja con los intereses estratégicos de la empresa, \
@@ -37,10 +43,6 @@ def build_triage_user_message(
     company_profile: CompanyProfile,
 ) -> str:
     """Compose the user-turn message for the triage LLM call."""
-
-    def _cap(text: str | None) -> str:
-        s = (text or "").strip()
-        return s[:_MAX_FIELD_CHARS] if len(s) > _MAX_FIELD_CHARS else s
 
     interest_bullets = "\n".join(f"  - {a}" for a in company_profile.interest_areas)
     field_bullets = "\n".join(f"  - {f}" for f in company_profile.company_fields)

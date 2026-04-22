@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from dagster import asset
-from sqlalchemy import select
 
 from iman_ingestion.aggregated.ingestion import (
     folder_name_from_tender_id,
@@ -34,6 +33,12 @@ from iman_ingestion.llm.pdf_to_images import (
 )
 from iman_ingestion.pdf_extract import extract_pdf_text
 from iman_ingestion.resources import ImanIngestionResource
+
+_SKIP_VALUES = ("1", "true", "yes")
+
+
+def _env_skip(var: str) -> bool:
+    return os.environ.get(var, "").lower() in _SKIP_VALUES
 
 
 def _collect_tender_pdf_text(downloads: Path, tender_id: str) -> str:
@@ -139,7 +144,7 @@ def tender_llm_enrichment(
     raw_aggregated_ingestion: Dict[str, Any],
 ) -> int:
     """Fill ``tenders.enrichment`` via multimodal LLM (PCAP pages as PNG) or text fallback."""
-    if os.environ.get("IMAN_SKIP_LLM_ENRICHMENT", "").lower() in ("1", "true", "yes"):
+    if _env_skip("IMAN_SKIP_LLM_ENRICHMENT"):
         context.log.info("IMAN_SKIP_LLM_ENRICHMENT is set; skipping LLM enrichment.")
         return 0
     downloads = Path(raw_aggregated_ingestion["downloads_dir"])
@@ -155,11 +160,19 @@ def tender_llm_enrichment(
     llm_client = get_llm_client()
     updated = 0
     pipeline_start = time.perf_counter()
+    rows: List[dict] = json.loads(
+        Path(raw_aggregated_ingestion["json_path"]).read_text(encoding="utf-8")
+    )
+    n = len(rows)
+    context.log.info("Enriching %d tender row(s) from current run.", n)
     with session_scope() as session:
-        tenders = list(session.scalars(select(Tender)).all())
-        n = len(tenders)
-        context.log.info("Enriching %d tender row(s).", n)
-        for i, t in enumerate(tenders, start=1):
+        for i, row in enumerate(rows, start=1):
+            tid = row.get("id")
+            if not tid:
+                continue
+            t = session.get(Tender, tid)
+            if not t:
+                continue
             folder = folder_name_from_tender_id(t.id)
             pcap_path = downloads / folder / "PCAP.pdf"
             t0 = time.perf_counter()
@@ -231,10 +244,11 @@ def tender_llm_enrichment(
 @asset(group_name="iman", compute_kind="openai")
 def tender_triage(
     context,
+    raw_aggregated_ingestion: Dict[str, Any],
     tender_llm_enrichment: int,
 ) -> int:
     """Evaluate each enriched tender against the company profile and assign a triage status."""
-    if os.environ.get("IMAN_SKIP_TRIAGE", "").lower() in ("1", "true", "yes"):
+    if _env_skip("IMAN_SKIP_TRIAGE"):
         context.log.info("IMAN_SKIP_TRIAGE is set; skipping triage.")
         return 0
 
@@ -245,15 +259,23 @@ def tender_triage(
     pipeline_start = time.perf_counter()
     counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
 
+    rows: List[dict] = json.loads(
+        Path(raw_aggregated_ingestion["json_path"]).read_text(encoding="utf-8")
+    )
+    n = len(rows)
+    context.log.info(
+        "tender_triage: evaluating %d tender(s) from current run; model=%r",
+        n,
+        chat_model_name(),
+    )
     with session_scope() as session:
-        tenders = list(session.scalars(select(Tender)).all())
-        n = len(tenders)
-        context.log.info(
-            "tender_triage: evaluating %d tender(s); model=%r",
-            n,
-            chat_model_name(),
-        )
-        for i, t in enumerate(tenders, start=1):
+        for i, row in enumerate(rows, start=1):
+            tid = row.get("id")
+            if not tid:
+                continue
+            t = session.get(Tender, tid)
+            if not t:
+                continue
             t0 = time.perf_counter()
             try:
                 result = evaluate_tender(
@@ -304,7 +326,7 @@ def document_embeddings(
     tender_llm_enrichment: int,
 ) -> int:
     """Embed each tender's LLM-generated summary and store it in ``tenders``."""
-    if os.environ.get("IMAN_SKIP_EMBEDDINGS", "").lower() in ("1", "true", "yes"):
+    if _env_skip("IMAN_SKIP_EMBEDDINGS"):
         return 0
     downloads = Path(raw_aggregated_ingestion["downloads_dir"])
     json_path = Path(raw_aggregated_ingestion["json_path"])

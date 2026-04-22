@@ -238,7 +238,14 @@ def test_scorer_recommended_path() -> None:
 
 
 def test_scorer_potential_discard_low_score() -> None:
-    client = _make_llm_client(_good_llm_response(score=1, matches=False))
+    # matches=True with 1 field bypasses the early-exit, exercising the formula path.
+    # score=1, 1 matching field → 1*0.55 + 4.0*0.30 + 1.5 = 3.25 < _THRESHOLD_NEUTRAL
+    response = {
+        "interest_match": {"score": 1, "reasoning": "No hay alineación."},
+        "scope_match": {"matches": True, "matching_fields": ["TIC"], "reasoning": "Ámbito TIC."},
+        "human_summary": "Licitación con escaso interés.",
+    }
+    client = _make_llm_client(response)
     result = evaluate_tender(
         tender_id="t1",
         title="Test",

@@ -62,10 +62,9 @@ class ImanIngestionResource(ConfigurableResource):
                 cu = cu.astimezone(timezone.utc)
             cutoff = cu
         else:
-            # Default to the start of today (UTC) so the pipeline always ingests
-            # only current-day entries and paginates through all of today's pages.
+            from datetime import timedelta
             now = datetime.now(tz=timezone.utc)
-            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         return IngestionConfig(
             atom_source=atom,
