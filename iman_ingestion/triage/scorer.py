@@ -8,18 +8,11 @@ from typing import Any
 from openai import OpenAI
 
 from iman_ingestion.llm.client import parse_llm_json_object, chat_model_name
-from iman_ingestion.triage.company_profile import CompanyProfile
+from iman_ingestion.triage.company_profile import CompanyProfile, TriageFilters
 from iman_ingestion.triage.triage_prompt import TRIAGE_SYSTEM_PROMPT, build_triage_user_message
 
 logger = logging.getLogger(__name__)
 
-_HARD_BLOCKERS = frozenset(
-    [
-        "place_of_execution_not_asturias",
-        "asks_technical_assistance_service",
-    ]
-)
-_SOFT_FLAG_PENALTY = 1.5
 _BASELINE = 1.5
 _INTEREST_WEIGHT = 0.55
 _SCOPE_WEIGHT = 0.30
@@ -36,16 +29,18 @@ def _coerce_score(raw: Any, fallback: int = 5) -> int:
         return fallback
 
 
-def _extract_flags(enrichment: dict[str, Any]) -> tuple[list[str], list[str]]:
+def _extract_flags(
+    enrichment: dict[str, Any], triage_filters: TriageFilters
+) -> tuple[list[str], list[str]]:
     """Return (hard_blockers_triggered, soft_flags_triggered)."""
     flags: dict = (enrichment.get("discard_review") or {}).get("criteria_flags") or {}
     hard: list[str] = []
     soft: list[str] = []
     for name, val in flags.items():
         if isinstance(val, dict) and val.get("applies") is True:
-            if name in _HARD_BLOCKERS:
+            if name in triage_filters.hard_blockers:
                 hard.append(name)
-            else:
+            elif name in triage_filters.soft_flags:
                 soft.append(name)
     return hard, soft
 
@@ -62,8 +57,19 @@ def _scope_score(scope_matches: bool, scope_fields: list[str]) -> float:
     return 10.0
 
 
-def _compute_score(interest: int, scope_matches: bool, scope_fields: list[str], soft_flags: list[str]) -> float:
-    raw = interest * _INTEREST_WEIGHT + _scope_score(scope_matches, scope_fields) * _SCOPE_WEIGHT + _BASELINE - len(soft_flags) * _SOFT_FLAG_PENALTY
+def _compute_score(
+    interest: int,
+    scope_matches: bool,
+    scope_fields: list[str],
+    soft_flags: list[str],
+    soft_flag_penalty: float,
+) -> float:
+    raw = (
+        interest * _INTEREST_WEIGHT
+        + _scope_score(scope_matches, scope_fields) * _SCOPE_WEIGHT
+        + _BASELINE
+        - len(soft_flags) * soft_flag_penalty
+    )
     return round(max(0.0, min(10.0, raw)), 2)
 
 
@@ -98,7 +104,7 @@ def evaluate_tender(
             "human_summary": "Licitación sin enriquecimiento LLM; requiere revisión manual.",
         }
 
-    hard_blockers, soft_flags = _extract_flags(enrichment)
+    hard_blockers, soft_flags = _extract_flags(enrichment, company_profile.triage_filters)
 
     if hard_blockers:
         blocker_str = ", ".join(hard_blockers)
@@ -159,7 +165,10 @@ def evaluate_tender(
         }
 
     interest_score = _coerce_score(interest_data.get("score"), fallback=5)
-    overall_score = _compute_score(interest_score, scope_matches, scope_fields, soft_flags)
+    overall_score = _compute_score(
+        interest_score, scope_matches, scope_fields, soft_flags,
+        company_profile.triage_filters.soft_flag_penalty,
+    )
     status = _status_from_score(overall_score)
 
     return {

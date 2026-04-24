@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from iman_ingestion.triage.company_profile import CompanyProfile, load_company_profile
+from iman_ingestion.triage.company_profile import CompanyProfile, TriageFilters, load_company_profile
 from iman_ingestion.triage.scorer import (
     _THRESHOLD_NEUTRAL,
     _THRESHOLD_RECOMMENDED,
@@ -22,11 +22,52 @@ from iman_ingestion.triage.triage_prompt import build_triage_user_message
 # ---------------------------------------------------------------------------
 
 
+_ALL_HARD_BLOCKERS = frozenset(
+    [
+        "place_of_execution_not_asturias",
+        "execution_period_under_2_months",
+        "maintenance_longer_than_1_year",
+        "asks_technical_assistance_service",
+        "iso_certification_required",
+        "ens_certification_required",
+        "pmi_certified_profile_required",
+        "economic_offer_weight_over_70_points",
+    ]
+)
+
+
 def _profile() -> CompanyProfile:
     return CompanyProfile(
         interest_areas=["Inteligencia artificial", "Ciberseguridad"],
         company_fields=["TIC", "I+D+i"],
         past_tender_categories=["Desarrollo de plataformas digitales"],
+        triage_filters=TriageFilters(
+            hard_blockers=_ALL_HARD_BLOCKERS,
+            soft_flags=frozenset(),
+            soft_flag_penalty=1.5,
+        ),
+    )
+
+
+def _profile_with_soft_flags() -> CompanyProfile:
+    return CompanyProfile(
+        interest_areas=["Inteligencia artificial", "Ciberseguridad"],
+        company_fields=["TIC", "I+D+i"],
+        past_tender_categories=["Desarrollo de plataformas digitales"],
+        triage_filters=TriageFilters(
+            hard_blockers=frozenset(
+                ["place_of_execution_not_asturias", "asks_technical_assistance_service"]
+            ),
+            soft_flags=frozenset(
+                [
+                    "execution_period_under_2_months",
+                    "maintenance_longer_than_1_year",
+                    "iso_certification_required",
+                    "ens_certification_required",
+                ]
+            ),
+            soft_flag_penalty=1.5,
+        ),
     )
 
 
@@ -260,8 +301,32 @@ def test_scorer_potential_discard_low_score() -> None:
     assert result["overall_score"] < _THRESHOLD_NEUTRAL
 
 
+def test_scorer_all_flags_are_hard_blockers() -> None:
+    # All 8 criteria flags are hard blockers → immediate potential_discard, no LLM call
+    extra = {
+        "execution_period_under_2_months": {"applies": True, "evidence": "6 weeks"},
+        "maintenance_longer_than_1_year": {"applies": True, "evidence": "2 years"},
+        "iso_certification_required": {"applies": True, "evidence": "ISO 9001"},
+        "ens_certification_required": {"applies": True, "evidence": "ENS alto"},
+    }
+    client = MagicMock()
+    result = evaluate_tender(
+        tender_id="t1",
+        title="Test",
+        party_name="Test",
+        tender_link="",
+        enrichment=_base_enrichment(extra_flags=extra),
+        llm_client=client,
+        company_profile=_profile(),
+    )
+    assert result["status"] == "potential_discard"
+    assert result["overall_score"] == 0.0
+    client.chat.completions.create.assert_not_called()
+
+
 def test_scorer_soft_flags_reduce_score() -> None:
-    # 4 soft flags → penalty = 4 * 1.5 = 6.0
+    # When flags are configured as soft, they penalise the score instead of blocking.
+    # 4 soft flags × 1.5 penalty = 6.0 reduction.
     extra = {
         "execution_period_under_2_months": {"applies": True, "evidence": "6 weeks"},
         "maintenance_longer_than_1_year": {"applies": True, "evidence": "2 years"},
@@ -270,6 +335,7 @@ def test_scorer_soft_flags_reduce_score() -> None:
     }
     client_no_flags = _make_llm_client(_good_llm_response(score=7, matches=True))
     client_with_flags = _make_llm_client(_good_llm_response(score=7, matches=True))
+    profile = _profile_with_soft_flags()
 
     result_no_flags = evaluate_tender(
         tender_id="t1",
@@ -278,7 +344,7 @@ def test_scorer_soft_flags_reduce_score() -> None:
         tender_link="",
         enrichment=_base_enrichment(),
         llm_client=client_no_flags,
-        company_profile=_profile(),
+        company_profile=profile,
     )
     result_with_flags = evaluate_tender(
         tender_id="t2",
@@ -287,7 +353,7 @@ def test_scorer_soft_flags_reduce_score() -> None:
         tender_link="",
         enrichment=_base_enrichment(extra_flags=extra),
         llm_client=client_with_flags,
-        company_profile=_profile(),
+        company_profile=profile,
     )
     assert result_with_flags["overall_score"] < result_no_flags["overall_score"]
     score_diff = result_no_flags["overall_score"] - result_with_flags["overall_score"]
