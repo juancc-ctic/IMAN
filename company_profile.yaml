@@ -43,39 +43,38 @@ past_tender_categories:
   - "Simulación y experimentación con computación cuántica"
 
 # ---------------------------------------------------------------------------
-# Filtros de triaje — ajustables sin tocar código
+# Dimensiones de triaje — el LLM puntúa cada dimensión de 0 a 5.
+# Añade, elimina o edita dimensiones según la estrategia comercial.
+# Los cambios surten efecto en la próxima ejecución (sin reiniciar Dagster).
 # ---------------------------------------------------------------------------
-# Mueve cualquier criterio entre hard_blockers e items de soft_flags según la
-# estrategia comercial del momento.  Los cambios surten efecto en la próxima
-# ejecución del pipeline (sin reiniciar Dagster).
-#
-# Criterios disponibles:
-#   place_of_execution_not_asturias       → Lugar de ejecución fuera de Asturias
-#   execution_period_under_2_months       → Plazo de ejecución menor de 2 meses
-#   maintenance_longer_than_1_year        → Mantenimiento durante más de un año
-#   asks_technical_assistance_service     → Servicio de asistencia técnica
-#   iso_certification_required            → Certificación ISO requerida
-#   ens_certification_required            → Certificación ENS requerida
-#   pmi_certified_profile_required        → Perfil con certificación PMI requerido
-#   economic_offer_weight_over_70_points  → Oferta económica con más de 70 puntos
-# ---------------------------------------------------------------------------
-triage_filters:
+triage_dimensions:
+  - name: "Alineación temática"
+    weight: 2.0
+    description: >
+      En qué medida el objeto y alcance de la licitación encajan con las áreas
+      de interés estratégico de la empresa (IA, IoT, transformación digital,
+      computación cuántica, salud digital, energía inteligente, etc.).
 
-  # Descarte automático: la licitación se marca potential_discard sin llamar al LLM.
-  hard_blockers:
-    - place_of_execution_not_asturias       # Lugar de ejecución fuera de Asturias
-    - execution_period_under_2_months       # Plazo de ejecución menor de 2 meses
-    - maintenance_longer_than_1_year        # Mantenimiento durante más de un año
-    - asks_technical_assistance_service     # Servicio de asistencia técnica
-    - iso_certification_required            # Certificación ISO requerida
-    - ens_certification_required            # Certificación ENS requerida
-    - pmi_certified_profile_required        # Perfil con certificación PMI requerido
-    - economic_offer_weight_over_70_points  # Oferta económica con más de 70 puntos
+  - name: "Encaje de ámbito"
+    weight: 1.0
+    description: >
+      Si el dominio de la licitación pertenece a uno o más campos de negocio
+      declarados por la empresa (TIC, I+D+i, consultoría tecnológica, formación
+      digital, estándares web, etc.).
 
-  # Penalización suave: reducen la puntuación pero no descartan automáticamente.
-  soft_flags:
-    penalty_per_flag: 1.5   # puntos descontados por cada criterio activo
-    items: []
-    # Ejemplo — para activar un criterio como flag suave en lugar de bloqueante duro:
-    # items:
-    #   - iso_certification_required   # Certificación ISO requerida
+  - name: "Condiciones de ejecución"
+    weight: 1.0
+    description: >
+      Idoneidad global del contrato para la empresa. Considera el lugar de
+      ejecución (penaliza fuera de Asturias), el plazo (penaliza menos de 2
+      meses), la carga de mantenimiento (penaliza más de 1 año o asistencia
+      técnica pura), y la viabilidad técnica: si los perfiles y certificaciones
+      requeridos (ISO, ENS, PMI u otros) coinciden con las capacidades internas
+      habituales de la empresa.
+
+  - name: "Criterios de valoración"
+    weight: 1.0
+    description: >
+      Si los criterios de adjudicación favorecen la calidad técnica sobre el
+      precio. Penaliza cuando el peso del precio supera el 50 % de la
+      puntuación total, lo que reduce el margen de diferenciación técnica.

@@ -8,69 +8,36 @@ from typing import Any
 from openai import OpenAI
 
 from iman_ingestion.llm.client import parse_llm_json_object, chat_model_name
-from iman_ingestion.triage.company_profile import CompanyProfile, TriageFilters
+from iman_ingestion.triage.company_profile import CompanyProfile
 from iman_ingestion.triage.triage_prompt import TRIAGE_SYSTEM_PROMPT, build_triage_user_message
 
 logger = logging.getLogger(__name__)
 
-_BASELINE = 1.5
-_INTEREST_WEIGHT = 0.55
-_SCOPE_WEIGHT = 0.30
-_THRESHOLD_RECOMMENDED = 6.5
-_THRESHOLD_NEUTRAL = 5.0
+_THRESHOLD_RECOMMENDED = 3.0
+_THRESHOLD_NEUTRAL = 2.0
 _TRIAGE_TEMPERATURE = 0.1
 
 
-def _coerce_score(raw: Any, fallback: int = 5) -> int:
+def _coerce_score(raw: Any, fallback: int = 3) -> int:
     try:
         val = int(float(raw))
-        return max(0, min(10, val))
+        return max(0, min(5, val))
     except (TypeError, ValueError):
         return fallback
 
 
-def _extract_flags(
-    enrichment: dict[str, Any], triage_filters: TriageFilters
-) -> tuple[list[str], list[str]]:
-    """Return (hard_blockers_triggered, soft_flags_triggered)."""
-    flags: dict = (enrichment.get("discard_review") or {}).get("criteria_flags") or {}
-    hard: list[str] = []
-    soft: list[str] = []
-    for name, val in flags.items():
-        if isinstance(val, dict) and val.get("applies") is True:
-            if name in triage_filters.hard_blockers:
-                hard.append(name)
-            elif name in triage_filters.soft_flags:
-                soft.append(name)
-    return hard, soft
-
-
-def _scope_score(scope_matches: bool, scope_fields: list[str]) -> float:
-    """Graduated scope score based on number of matching fields (0–10)."""
-    n = len(scope_fields)
-    if n == 0:
-        return 3.0  # scope_matches is True here; early-exit guards the no-match case
-    if n <= 2:
-        return 4.0
-    if n <= 4:
-        return 7.0
-    return 10.0
-
-
-def _compute_score(
-    interest: int,
-    scope_matches: bool,
-    scope_fields: list[str],
-    soft_flags: list[str],
-    soft_flag_penalty: float,
-) -> float:
-    raw = (
-        interest * _INTEREST_WEIGHT
-        + _scope_score(scope_matches, scope_fields) * _SCOPE_WEIGHT
-        + _BASELINE
-        - len(soft_flags) * soft_flag_penalty
-    )
-    return round(max(0.0, min(10.0, raw)), 2)
+def _weighted_score(dimensions: list[dict], weight_map: dict[str, float]) -> float | None:
+    items = [
+        (d["score"], weight_map.get(d["name"], 1.0))
+        for d in dimensions
+        if isinstance(d.get("score"), (int, float))
+    ]
+    if not items:
+        return None
+    total_weight = sum(w for _, w in items)
+    if total_weight == 0:
+        return None
+    return round(sum(s * w for s, w in items) / total_weight, 2)
 
 
 def _status_from_score(score: float) -> str:
@@ -98,26 +65,8 @@ def evaluate_tender(
         return {
             "status": "neutral",
             "overall_score": None,
-            "interest_match": {"score": None, "reasoning": "Sin análisis de enriquecimiento disponible."},
-            "scope_match": {"matches": None, "matching_fields": [], "reasoning": ""},
-            "discard_flags_triggered": [],
+            "dimensions": [],
             "human_summary": "Licitación sin enriquecimiento LLM; requiere revisión manual.",
-        }
-
-    hard_blockers, soft_flags = _extract_flags(enrichment, company_profile.triage_filters)
-
-    if hard_blockers:
-        blocker_str = ", ".join(hard_blockers)
-        return {
-            "status": "potential_discard",
-            "overall_score": 0.0,
-            "interest_match": {
-                "score": None,
-                "reasoning": f"Descarte automático por: {blocker_str}.",
-            },
-            "scope_match": {"matches": None, "matching_fields": [], "reasoning": "No evaluado."},
-            "discard_flags_triggered": hard_blockers,
-            "human_summary": f"Descartada automáticamente por: {blocker_str}.",
         }
 
     user_msg = build_triage_user_message(
@@ -139,50 +88,41 @@ def evaluate_tender(
             temperature=_TRIAGE_TEMPERATURE,
         )
         raw_content = response.choices[0].message.content or ""
+        logger.debug("Triage LLM raw for %r: %s", tender_id, raw_content[:500])
         result = parse_llm_json_object(raw_content)
     except Exception as exc:
         logger.warning("Triage LLM parse failed for %r: %s | raw=%r", tender_id, exc, raw_content[:300])
         result = {}
 
-    interest_data: dict = result.get("interest_match") or {}
-    scope_data: dict = result.get("scope_match") or {}
+    if not result.get("dimensions"):
+        logger.warning("Triage LLM returned no dimensions for %r | raw=%r", tender_id, raw_content[:500])
 
-    scope_matches = bool(scope_data.get("matches"))
-    scope_fields: list[str] = list(scope_data.get("matching_fields") or [])
+    raw_dims: list = result.get("dimensions") or []
+    dimensions: list[dict] = []
+    for item in raw_dims:
+        if not isinstance(item, dict):
+            continue
+        dimensions.append({
+            "name": str(item.get("name") or "").strip(),
+            "score": _coerce_score(item.get("score")),
+            "reasoning": str(item.get("reasoning") or "").strip(),
+        })
 
-    if not scope_matches and not scope_fields:
-        scope_reasoning = (scope_data.get("reasoning") or "").strip()
+    if any(d["score"] == 0 for d in dimensions):
         return {
             "status": "potential_discard",
             "overall_score": 0.0,
-            "interest_match": {
-                "score": _coerce_score(interest_data.get("score"), fallback=5),
-                "reasoning": (interest_data.get("reasoning") or "").strip(),
-            },
-            "scope_match": {"matches": False, "matching_fields": [], "reasoning": scope_reasoning},
-            "discard_flags_triggered": soft_flags,
-            "human_summary": (result.get("human_summary") or "Sin alineación con el ámbito de la empresa.").strip(),
+            "dimensions": dimensions,
+            "human_summary": str(result.get("human_summary") or "").strip(),
         }
 
-    interest_score = _coerce_score(interest_data.get("score"), fallback=5)
-    overall_score = _compute_score(
-        interest_score, scope_matches, scope_fields, soft_flags,
-        company_profile.triage_filters.soft_flag_penalty,
-    )
-    status = _status_from_score(overall_score)
+    weight_map = {d.name: d.weight for d in company_profile.triage_dimensions}
+    overall = _weighted_score(dimensions, weight_map)
+    status = _status_from_score(overall) if overall is not None else "neutral"
 
     return {
         "status": status,
-        "overall_score": overall_score,
-        "interest_match": {
-            "score": interest_score,
-            "reasoning": (interest_data.get("reasoning") or "").strip(),
-        },
-        "scope_match": {
-            "matches": scope_matches,
-            "matching_fields": scope_fields,
-            "reasoning": (scope_data.get("reasoning") or "").strip(),
-        },
-        "discard_flags_triggered": soft_flags,
-        "human_summary": (result.get("human_summary") or "").strip(),
+        "overall_score": overall,
+        "dimensions": dimensions,
+        "human_summary": str(result.get("human_summary") or "").strip(),
     }

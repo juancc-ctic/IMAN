@@ -35,6 +35,8 @@ Extract and return a JSON object with exactly this structure (all string values 
   "required_profiles_pages": null | [1, 2],
   "assessment_criteria": "string: how the bid will be evaluated; include point breakdown if present",
   "assessment_criteria_pages": null | [1, 2],
+  "execution_period": "string or null: base contract execution duration as a short value like '12 meses', '6 semanas', '90 días'. Rules: (1) digits only, never words ('doce' → '12'); (2) only the base duration — strip start dates, renewal options, extensions, and qualifiers; (3) if the document only references where to find the period (e.g. 'figura en el Anexo') without stating the actual value, return null; (4) null if not stated anywhere.",
+  "execution_period_pages": null | [1, 2],
   "outsourcing": {{
     "exists": true | false | null,
     "percentage": "string or null (e.g. max % subcontracting allowed)",
@@ -288,6 +290,8 @@ def default_enrichment_on_error(message: str) -> Dict[str, Any]:
         "required_profiles_pages": None,
         "assessment_criteria": "",
         "assessment_criteria_pages": None,
+        "execution_period": None,
+        "execution_period_pages": None,
         "outsourcing": {
             "exists": None,
             "percentage": None,

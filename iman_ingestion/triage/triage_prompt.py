@@ -21,16 +21,20 @@ Tu misión es evaluar si una licitación pública encaja con los intereses estra
 para que los expertos humanos puedan decidir con rapidez si presentar oferta.
 
 Recibirás:
-1. El perfil de la empresa: áreas de interés, campos de negocio (Ámbito) y categorías de licitaciones anteriores.
-2. El análisis estructurado de una licitación ya extraído por otro asistente.
+1. El perfil de la empresa: áreas de interés, campos de negocio y categorías de licitaciones anteriores.
+2. Las dimensiones de evaluación definidas por la empresa, cada una con nombre y descripción.
+3. El análisis estructurado de la licitación ya extraído por otro asistente.
 
-Debes evaluar dos dimensiones:
-- Interés de la empresa: en qué medida el alcance, dominio y requisitos de la licitación se alinean \
-con las áreas de interés activas de la empresa y sus categorías históricas de presentación.
-- Ámbito: si el dominio de la licitación pertenece a uno o más campos de negocio declarados por la empresa.
+Para cada dimensión debes asignar una puntuación entera de 0 a 5 y un razonamiento breve:
+  0 — completamente inadecuado o descarte directo
+  1 — muy débil alineación
+  2 — alineación parcial o con reservas importantes
+  3 — alineación razonable
+  4 — buena alineación
+  5 — encaje excelente
 
-Responde SIEMPRE con un único objeto JSON válido. Sin bloques de código markdown, sin comentarios antes o después \
-del JSON. Usa null para valores desconocidos. Los campos de razonamiento pueden estar en español.\
+Responde SIEMPRE con un único objeto JSON válido. Sin bloques de código markdown, sin comentarios \
+antes o después del JSON. Los campos de razonamiento deben estar en español.\
 """
 
 
@@ -48,16 +52,6 @@ def build_triage_user_message(
     field_bullets = "\n".join(f"  - {f}" for f in company_profile.company_fields)
     category_bullets = "\n".join(f"  - {c}" for c in company_profile.past_tender_categories)
 
-    # Collect soft flags that are triggered
-    flags: dict[str, Any] = (enrichment.get("discard_review") or {}).get("criteria_flags") or {}
-    triggered_soft = [
-        name
-        for name, val in flags.items()
-        if isinstance(val, dict) and val.get("applies") is True
-        # Hard blockers are already filtered before this prompt is called
-    ]
-    triggered_str = ", ".join(triggered_soft) if triggered_soft else "ninguno"
-
     packages_raw = enrichment.get("packages")
     packages_str = ""
     if packages_raw:
@@ -67,6 +61,32 @@ def build_triage_user_message(
             packages_str = str(packages_raw)[:_MAX_FIELD_CHARS]
 
     discard_summary = _cap((enrichment.get("discard_review") or {}).get("summary"))
+
+    # Build the criteria_flags block so the LLM has raw evidence for each dimension
+    flags: dict[str, Any] = (enrichment.get("discard_review") or {}).get("criteria_flags") or {}
+    flags_lines = []
+    for flag_name, val in flags.items():
+        if isinstance(val, dict):
+            applies = val.get("applies")
+            evidence = (val.get("evidence") or "").strip()
+            flags_lines.append(f"  - {flag_name}: applies={applies}; {evidence}")
+    flags_block = "\n".join(flags_lines) if flags_lines else "  (no flags extracted)"
+
+    # Build dimension instructions block
+    dims = company_profile.triage_dimensions
+    if dims:
+        dim_schema_lines = []
+        for d in dims:
+            dim_schema_lines.append(
+                f'    {{"name": "{d.name}", "score": <0–5>, "reasoning": "<1 frase concisa>"}}'
+            )
+        dim_schema = ",\n".join(dim_schema_lines)
+        dim_descriptions = "\n".join(
+            f"  - **{d.name}**: {d.description}" for d in dims
+        )
+    else:
+        dim_schema = '    {"name": "<dimensión>", "score": <0–5>, "reasoning": "<1–3 frases>"}'
+        dim_descriptions = "  (no dimensions configured)"
 
     return f"""\
 ## Perfil de empresa
@@ -79,6 +99,10 @@ Campos de negocio (Ámbito):
 
 Categorías de licitaciones anteriores:
 {category_bullets}
+
+## Dimensiones de evaluación
+
+{dim_descriptions}
 
 ## Análisis de la licitación
 
@@ -93,28 +117,24 @@ Perfiles requeridos: {_cap(enrichment.get("required_profiles"))}
 Criterios de valoración: {_cap(enrichment.get("assessment_criteria"))}
 Lotes/paquetes: {packages_str or "no indicados"}
 Análisis de descarte previo: {discard_summary or "no disponible"}
-Flags de descarte activados (excluyendo bloqueantes duros): {triggered_str}
+Flags de descarte (de la extracción inicial):
+{flags_block}
 
 ## Instrucciones
 
-Evalúa las dos dimensiones y devuelve un único objeto JSON con esta estructura exacta:
+Evalúa cada dimensión definida arriba y devuelve un único objeto JSON con esta estructura exacta:
 
 {{
-  "interest_match": {{
-    "score": <entero 0–10>,
-    "reasoning": "<2–4 frases explicando por qué esta licitación encaja o no con las áreas de interés y categorías históricas>"
-  }},
-  "scope_match": {{
-    "matches": <true | false>,
-    "matching_fields": ["<campo1>", "<campo2>"],
-    "reasoning": "<1–2 frases>"
-  }},
+  "dimensions": [
+{dim_schema}
+  ],
   "human_summary": "<1–2 frases para el revisor humano que capturan el aspecto más relevante de esta licitación para la empresa>"
 }}
 
 Reglas:
-- interest_match.score: 0 = ninguna alineación; 10 = alineación perfecta.
-- scope_match.matches: true si el ámbito pertenece a uno o más campos de negocio de la empresa.
-- matching_fields: solo los campos de negocio que coincidan; lista vacía si ninguno.
-- human_summary: orientado al revisor; menciona el aspecto más relevante para la decisión de concurrir.\
+- Devuelve exactamente una entrada por cada dimensión definida, en el mismo orden.
+- El campo "name" debe coincidir exactamente con el nombre de la dimensión.
+- "score" es un entero de 0 a 5 según la escala indicada en el sistema.
+- "reasoning": máximo una frase corta y directa; solo el motivo principal del score, sin explicaciones adicionales.
+- "human_summary": orientado al revisor; máximo una frase; menciona el aspecto más relevante para la decisión de concurrir.\
 """

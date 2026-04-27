@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from iman_ingestion.triage.company_profile import CompanyProfile, TriageFilters, load_company_profile
+from iman_ingestion.triage.company_profile import CompanyProfile, TriageDimension, load_company_profile
 from iman_ingestion.triage.scorer import (
     _THRESHOLD_NEUTRAL,
     _THRESHOLD_RECOMMENDED,
@@ -22,52 +22,17 @@ from iman_ingestion.triage.triage_prompt import build_triage_user_message
 # ---------------------------------------------------------------------------
 
 
-_ALL_HARD_BLOCKERS = frozenset(
-    [
-        "place_of_execution_not_asturias",
-        "execution_period_under_2_months",
-        "maintenance_longer_than_1_year",
-        "asks_technical_assistance_service",
-        "iso_certification_required",
-        "ens_certification_required",
-        "pmi_certified_profile_required",
-        "economic_offer_weight_over_70_points",
-    ]
-)
-
-
 def _profile() -> CompanyProfile:
     return CompanyProfile(
         interest_areas=["Inteligencia artificial", "Ciberseguridad"],
         company_fields=["TIC", "I+D+i"],
         past_tender_categories=["Desarrollo de plataformas digitales"],
-        triage_filters=TriageFilters(
-            hard_blockers=_ALL_HARD_BLOCKERS,
-            soft_flags=frozenset(),
-            soft_flag_penalty=1.5,
-        ),
-    )
-
-
-def _profile_with_soft_flags() -> CompanyProfile:
-    return CompanyProfile(
-        interest_areas=["Inteligencia artificial", "Ciberseguridad"],
-        company_fields=["TIC", "I+D+i"],
-        past_tender_categories=["Desarrollo de plataformas digitales"],
-        triage_filters=TriageFilters(
-            hard_blockers=frozenset(
-                ["place_of_execution_not_asturias", "asks_technical_assistance_service"]
-            ),
-            soft_flags=frozenset(
-                [
-                    "execution_period_under_2_months",
-                    "maintenance_longer_than_1_year",
-                    "iso_certification_required",
-                    "ens_certification_required",
-                ]
-            ),
-            soft_flag_penalty=1.5,
-        ),
+        triage_dimensions=[
+            TriageDimension(name="Alineación temática", description="Encaje con áreas de interés.", weight=2.0),
+            TriageDimension(name="Encaje de ámbito", description="Pertenece a campos de negocio.", weight=1.0),
+            TriageDimension(name="Condiciones de ejecución", description="Plazo, lugar, certificaciones.", weight=1.0),
+            TriageDimension(name="Criterios de valoración", description="Peso técnico vs precio.", weight=1.0),
+        ],
     )
 
 
@@ -83,9 +48,9 @@ def _base_enrichment(*, extra_flags: dict | None = None) -> dict:
         "economic_offer_weight_over_70_points": {"applies": False, "evidence": ""},
     }
     if extra_flags:
-        for k, v in extra_flags.items():
-            flags[k] = v
+        flags.update(extra_flags)
     return {
+        "summary": "Plataforma de IA para clasificación de documentos.",
         "object_of_the_contract": "Desarrollo de plataforma de IA",
         "scope_of_the_work": "Implementar un sistema de ML para clasificación de documentos",
         "required_profiles": "Arquitecto de software, especialista en ML",
@@ -110,14 +75,20 @@ def _make_llm_client(response_dict: dict) -> MagicMock:
     return client
 
 
-def _good_llm_response(score: int = 8, matches: bool = True) -> dict:
+def _good_llm_response(scores: list[int] | None = None) -> dict:
+    dims = [
+        "Alineación temática",
+        "Encaje de ámbito",
+        "Condiciones de ejecución",
+        "Criterios de valoración",
+    ]
+    if scores is None:
+        scores = [5, 5, 4, 4]
     return {
-        "interest_match": {"score": score, "reasoning": "Buena alineación con IA y plataformas."},
-        "scope_match": {
-            "matches": matches,
-            "matching_fields": ["TIC"] if matches else [],
-            "reasoning": "El ámbito es TIC.",
-        },
+        "dimensions": [
+            {"name": name, "score": score, "reasoning": "Razonamiento de prueba."}
+            for name, score in zip(dims, scores)
+        ],
         "human_summary": "Licitación de IA alineada con los intereses de la empresa.",
     }
 
@@ -130,14 +101,16 @@ def _good_llm_response(score: int = 8, matches: bool = True) -> dict:
 def test_load_company_profile_valid(tmp_path: Path) -> None:
     yaml_file = tmp_path / "profile.yaml"
     yaml_file.write_text(
-        "interest_areas:\n  - IA\ncompany_fields:\n  - TIC\npast_tender_categories:\n  - Plataformas\n",
+        "interest_areas:\n  - IA\ncompany_fields:\n  - TIC\npast_tender_categories:\n  - Plataformas\n"
+        "triage_dimensions:\n  - name: Alineación\n    description: Encaje temático.\n",
         encoding="utf-8",
     )
     profile = load_company_profile(path=yaml_file)
-    assert isinstance(profile.interest_areas, list)
     assert profile.interest_areas == ["IA"]
     assert profile.company_fields == ["TIC"]
     assert profile.past_tender_categories == ["Plataformas"]
+    assert len(profile.triage_dimensions) == 1
+    assert profile.triage_dimensions[0].name == "Alineación"
 
 
 def test_load_company_profile_missing() -> None:
@@ -152,6 +125,7 @@ def test_load_company_profile_empty_file(tmp_path: Path) -> None:
     assert profile.interest_areas == []
     assert profile.company_fields == []
     assert profile.past_tender_categories == []
+    assert profile.triage_dimensions == []
 
 
 # ---------------------------------------------------------------------------
@@ -160,33 +134,44 @@ def test_load_company_profile_empty_file(tmp_path: Path) -> None:
 
 
 def test_build_triage_user_message_contains_key_fields() -> None:
-    enrichment = _base_enrichment()
-    profile = _profile()
     msg = build_triage_user_message(
         title="Sistema de IA para AAPP",
         party_name="Ayuntamiento de Gijón",
         tender_link="https://example.com/tender/1",
-        enrichment=enrichment,
-        company_profile=profile,
+        enrichment=_base_enrichment(),
+        company_profile=_profile(),
     )
     assert "Inteligencia artificial" in msg
     assert "TIC" in msg
     assert "Sistema de IA para AAPP" in msg
     assert "Ayuntamiento de Gijón" in msg
+    assert "Alineación temática" in msg
+    assert "Encaje de ámbito" in msg
 
 
-def test_build_triage_user_message_caps_long_fields() -> None:
-    enrichment = _base_enrichment()
-    enrichment["scope_of_the_work"] = "X" * 5000
+def test_build_triage_user_message_contains_dimensions() -> None:
     profile = _profile()
     msg = build_triage_user_message(
         title="Test",
         party_name="Test",
         tender_link="https://example.com",
-        enrichment=enrichment,
+        enrichment=_base_enrichment(),
         company_profile=profile,
     )
-    # 2000-char cap plus some surrounding text — total shouldn't explode
+    for dim in profile.triage_dimensions:
+        assert dim.name in msg
+
+
+def test_build_triage_user_message_caps_long_fields() -> None:
+    enrichment = _base_enrichment()
+    enrichment["scope_of_the_work"] = "X" * 5000
+    msg = build_triage_user_message(
+        title="Test",
+        party_name="Test",
+        tender_link="https://example.com",
+        enrichment=enrichment,
+        company_profile=_profile(),
+    )
     assert len(msg) < 20_000
 
 
@@ -207,7 +192,7 @@ def test_scorer_no_enrichment_returns_neutral() -> None:
     )
     assert result["status"] == "neutral"
     assert result["overall_score"] is None
-    MagicMock().chat.completions.create.assert_not_called()
+    assert result["dimensions"] == []
 
 
 def test_scorer_parse_error_enrichment_returns_neutral() -> None:
@@ -221,49 +206,11 @@ def test_scorer_parse_error_enrichment_returns_neutral() -> None:
         company_profile=_profile(),
     )
     assert result["status"] == "neutral"
+    assert result["overall_score"] is None
 
 
-def test_scorer_hard_blocker_place_skips_llm() -> None:
-    enrichment = _base_enrichment(
-        extra_flags={"place_of_execution_not_asturias": {"applies": True, "evidence": "Madrid"}}
-    )
-    client = MagicMock()
-    result = evaluate_tender(
-        tender_id="t1",
-        title="Test",
-        party_name="Test",
-        tender_link="",
-        enrichment=enrichment,
-        llm_client=client,
-        company_profile=_profile(),
-    )
-    assert result["status"] == "potential_discard"
-    assert result["overall_score"] == 0.0
-    assert "place_of_execution_not_asturias" in result["discard_flags_triggered"]
-    client.chat.completions.create.assert_not_called()
-
-
-def test_scorer_hard_blocker_technical_assistance_skips_llm() -> None:
-    enrichment = _base_enrichment(
-        extra_flags={"asks_technical_assistance_service": {"applies": True, "evidence": "helpdesk"}}
-    )
-    client = MagicMock()
-    result = evaluate_tender(
-        tender_id="t1",
-        title="Test",
-        party_name="Test",
-        tender_link="",
-        enrichment=enrichment,
-        llm_client=client,
-        company_profile=_profile(),
-    )
-    assert result["status"] == "potential_discard"
-    assert result["overall_score"] == 0.0
-    client.chat.completions.create.assert_not_called()
-
-
-def test_scorer_recommended_path() -> None:
-    client = _make_llm_client(_good_llm_response(score=9, matches=True))
+def test_scorer_recommended_high_scores() -> None:
+    client = _make_llm_client(_good_llm_response(scores=[5, 5, 5, 5]))
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
@@ -274,19 +221,13 @@ def test_scorer_recommended_path() -> None:
         company_profile=_profile(),
     )
     assert result["status"] == "recommended"
-    assert result["overall_score"] is not None
-    assert result["overall_score"] >= _THRESHOLD_RECOMMENDED
+    assert result["overall_score"] == 5.0
+    assert len(result["dimensions"]) == 4
 
 
-def test_scorer_potential_discard_low_score() -> None:
-    # matches=True with 1 field bypasses the early-exit, exercising the formula path.
-    # score=1, 1 matching field → 1*0.55 + 4.0*0.30 + 1.5 = 3.25 < _THRESHOLD_NEUTRAL
-    response = {
-        "interest_match": {"score": 1, "reasoning": "No hay alineación."},
-        "scope_match": {"matches": True, "matching_fields": ["TIC"], "reasoning": "Ámbito TIC."},
-        "human_summary": "Licitación con escaso interés.",
-    }
-    client = _make_llm_client(response)
+def test_scorer_potential_discard_low_scores() -> None:
+    # Weighted avg: (1*2 + 1*1 + 1*1 + 1*1) / 5 = 1.0 < _THRESHOLD_NEUTRAL
+    client = _make_llm_client(_good_llm_response(scores=[1, 1, 1, 1]))
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
@@ -301,72 +242,56 @@ def test_scorer_potential_discard_low_score() -> None:
     assert result["overall_score"] < _THRESHOLD_NEUTRAL
 
 
-def test_scorer_all_flags_are_hard_blockers() -> None:
-    # All 8 criteria flags are hard blockers → immediate potential_discard, no LLM call
-    extra = {
-        "execution_period_under_2_months": {"applies": True, "evidence": "6 weeks"},
-        "maintenance_longer_than_1_year": {"applies": True, "evidence": "2 years"},
-        "iso_certification_required": {"applies": True, "evidence": "ISO 9001"},
-        "ens_certification_required": {"applies": True, "evidence": "ENS alto"},
-    }
-    client = MagicMock()
+def test_scorer_neutral_mid_scores() -> None:
+    # Weighted avg: (2*2 + 3*1 + 2*1 + 3*1) / 5 = 12/5 = 2.4
+    client = _make_llm_client(_good_llm_response(scores=[2, 3, 2, 3]))
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
         party_name="Test",
         tender_link="",
-        enrichment=_base_enrichment(extra_flags=extra),
+        enrichment=_base_enrichment(),
+        llm_client=client,
+        company_profile=_profile(),
+    )
+    assert result["status"] == "neutral"
+    assert _THRESHOLD_NEUTRAL <= result["overall_score"] < _THRESHOLD_RECOMMENDED
+
+
+def test_scorer_overall_score_is_weighted_average() -> None:
+    # weights: Alineación=2, rest=1 → total weight=5
+    # scores [4, 2, 3, 5] → (4*2 + 2*1 + 3*1 + 5*1) / 5 = 18/5 = 3.6
+    scores = [4, 2, 3, 5]
+    client = _make_llm_client(_good_llm_response(scores=scores))
+    result = evaluate_tender(
+        tender_id="t1",
+        title="Test",
+        party_name="Test",
+        tender_link="",
+        enrichment=_base_enrichment(),
+        llm_client=client,
+        company_profile=_profile(),
+    )
+    assert result["overall_score"] == 3.6
+
+
+def test_scorer_zero_score_discards_automatically() -> None:
+    client = _make_llm_client(_good_llm_response(scores=[0, 4, 4, 4]))
+    result = evaluate_tender(
+        tender_id="t1",
+        title="Test",
+        party_name="Test",
+        tender_link="",
+        enrichment=_base_enrichment(),
         llm_client=client,
         company_profile=_profile(),
     )
     assert result["status"] == "potential_discard"
     assert result["overall_score"] == 0.0
-    client.chat.completions.create.assert_not_called()
 
 
-def test_scorer_soft_flags_reduce_score() -> None:
-    # When flags are configured as soft, they penalise the score instead of blocking.
-    # 4 soft flags × 1.5 penalty = 6.0 reduction.
-    extra = {
-        "execution_period_under_2_months": {"applies": True, "evidence": "6 weeks"},
-        "maintenance_longer_than_1_year": {"applies": True, "evidence": "2 years"},
-        "iso_certification_required": {"applies": True, "evidence": "ISO 9001"},
-        "ens_certification_required": {"applies": True, "evidence": "ENS alto"},
-    }
-    client_no_flags = _make_llm_client(_good_llm_response(score=7, matches=True))
-    client_with_flags = _make_llm_client(_good_llm_response(score=7, matches=True))
-    profile = _profile_with_soft_flags()
-
-    result_no_flags = evaluate_tender(
-        tender_id="t1",
-        title="Test",
-        party_name="Test",
-        tender_link="",
-        enrichment=_base_enrichment(),
-        llm_client=client_no_flags,
-        company_profile=profile,
-    )
-    result_with_flags = evaluate_tender(
-        tender_id="t2",
-        title="Test",
-        party_name="Test",
-        tender_link="",
-        enrichment=_base_enrichment(extra_flags=extra),
-        llm_client=client_with_flags,
-        company_profile=profile,
-    )
-    assert result_with_flags["overall_score"] < result_no_flags["overall_score"]
-    score_diff = result_no_flags["overall_score"] - result_with_flags["overall_score"]
-    assert abs(score_diff - 6.0) < 0.01
-
-
-def test_scorer_invalid_llm_score_clamped() -> None:
-    bad_response = {
-        "interest_match": {"score": 15, "reasoning": "..."},
-        "scope_match": {"matches": True, "matching_fields": ["TIC"], "reasoning": "..."},
-        "human_summary": "Test.",
-    }
-    client = _make_llm_client(bad_response)
+def test_scorer_zero_score_on_any_dimension_discards() -> None:
+    client = _make_llm_client(_good_llm_response(scores=[5, 5, 0, 5]))
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
@@ -376,33 +301,24 @@ def test_scorer_invalid_llm_score_clamped() -> None:
         llm_client=client,
         company_profile=_profile(),
     )
-    assert result["overall_score"] is not None
-    assert 0.0 <= result["overall_score"] <= 10.0
+    assert result["status"] == "potential_discard"
+    assert result["overall_score"] == 0.0
 
 
-def test_scorer_discard_flags_triggered_list_correct() -> None:
-    extra = {
-        "execution_period_under_2_months": {"applies": True, "evidence": "5 weeks"},
-        "maintenance_longer_than_1_year": {"applies": True, "evidence": "18 months"},
-        "iso_certification_required": {"applies": True, "evidence": "ISO 27001"},
-        "ens_certification_required": {"applies": False, "evidence": ""},
-    }
-    client = _make_llm_client(_good_llm_response())
+def test_scorer_score_clamped_to_0_5() -> None:
+    response = _good_llm_response(scores=[10, -3, 7, 2])
+    client = _make_llm_client(response)
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
         party_name="Test",
         tender_link="",
-        enrichment=_base_enrichment(extra_flags=extra),
+        enrichment=_base_enrichment(),
         llm_client=client,
         company_profile=_profile(),
     )
-    triggered = result["discard_flags_triggered"]
-    assert len(triggered) == 3
-    assert "execution_period_under_2_months" in triggered
-    assert "maintenance_longer_than_1_year" in triggered
-    assert "iso_certification_required" in triggered
-    assert "ens_certification_required" not in triggered
+    for dim in result["dimensions"]:
+        assert 0 <= dim["score"] <= 5
 
 
 def test_scorer_llm_parse_failure_does_not_crash() -> None:
@@ -410,7 +326,6 @@ def test_scorer_llm_parse_failure_does_not_crash() -> None:
     completion = MagicMock()
     completion.choices = [MagicMock(message=MagicMock(content="this is not json {{{"))]
     client.chat.completions.create.return_value = completion
-
     result = evaluate_tender(
         tender_id="t1",
         title="Test",
@@ -420,9 +335,39 @@ def test_scorer_llm_parse_failure_does_not_crash() -> None:
         llm_client=client,
         company_profile=_profile(),
     )
-    # Should not raise; should return a valid dict
     assert "status" in result
     assert "overall_score" in result
+    assert "dimensions" in result
+
+
+def test_scorer_empty_dimensions_from_llm_gives_neutral() -> None:
+    client = _make_llm_client({"dimensions": [], "human_summary": "Sin dimensiones."})
+    result = evaluate_tender(
+        tender_id="t1",
+        title="Test",
+        party_name="Test",
+        tender_link="",
+        enrichment=_base_enrichment(),
+        llm_client=client,
+        company_profile=_profile(),
+    )
+    assert result["status"] == "neutral"
+    assert result["overall_score"] is None
+
+
+def test_scorer_missing_dimensions_key_gives_neutral() -> None:
+    client = _make_llm_client({"human_summary": "Sin clave dimensions."})
+    result = evaluate_tender(
+        tender_id="t1",
+        title="Test",
+        party_name="Test",
+        tender_link="",
+        enrichment=_base_enrichment(),
+        llm_client=client,
+        company_profile=_profile(),
+    )
+    assert result["status"] == "neutral"
+    assert result["overall_score"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +378,6 @@ try:
     from tests.llm_live_helpers import skip_without_live_llm
 except ImportError:
     import pytest as _pytest
-
     skip_without_live_llm = _pytest.mark.skip(reason="llm_live_helpers not found")
 
 
@@ -442,23 +386,22 @@ def test_triage_live_llm_integration() -> None:
     from iman_ingestion.llm.client import get_llm_client
 
     client = get_llm_client()
-    profile = _profile()
-    enrichment = _base_enrichment()
-
     result = evaluate_tender(
         tender_id="live-test",
         title="Desarrollo de plataforma de IA para clasificación de expedientes",
         party_name="Gobierno del Principado de Asturias",
         tender_link="https://example.com/tender/live",
-        enrichment=enrichment,
+        enrichment=_base_enrichment(),
         llm_client=client,
-        company_profile=profile,
+        company_profile=_profile(),
     )
-
     assert isinstance(result, dict)
     assert result["status"] in ("recommended", "neutral", "potential_discard")
-    assert isinstance(result["overall_score"], (int, float))
-    assert isinstance(result["interest_match"], dict)
-    assert isinstance(result["scope_match"], dict)
-    assert isinstance(result["discard_flags_triggered"], list)
+    assert isinstance(result["dimensions"], list)
+    assert len(result["dimensions"]) > 0
+    for dim in result["dimensions"]:
+        assert "name" in dim
+        assert "score" in dim
+        assert 0 <= dim["score"] <= 5
+        assert "reasoning" in dim
     assert isinstance(result["human_summary"], str)

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Set
 
 MergeMode = Literal["first_wins", "batch_overwrites"]
 
-# Top-level string fields from the tender analysis schema.
+# Top-level string fields that MUST be non-empty for early-exit / gap-fill.
 TOP_LEVEL_STRING_KEYS = (
     "object_of_the_contract",
     "scope_of_the_work",
@@ -17,8 +17,15 @@ TOP_LEVEL_STRING_KEYS = (
     "assessment_criteria",
 )
 
+# Optional top-level string fields: merged across batches but not required.
+OPTIONAL_STRING_KEYS = (
+    "execution_period",
+)
+
 # Companion keys: 1-based PCAP page numbers (lists of distinct positive ints).
-TOP_LEVEL_PAGE_KEYS = tuple(f"{k}_pages" for k in TOP_LEVEL_STRING_KEYS)
+TOP_LEVEL_PAGE_KEYS = tuple(
+    f"{k}_pages" for k in (*TOP_LEVEL_STRING_KEYS, *OPTIONAL_STRING_KEYS)
+)
 
 # Expected keys under discard_review.criteria_flags.
 CRITERIA_FLAG_KEYS = (
@@ -40,6 +47,7 @@ _FIELD_LABELS: Dict[str, str] = {
     "economic_solvency": "Economic solvency requirements",
     "required_profiles": "Required profiles / team",
     "assessment_criteria": "Assessment criteria (incl. points)",
+    "execution_period": "Execution period / contract duration",
     "outsourcing": "Outsourcing (exists, %, notes)",
     "discard_review.summary": "Discard review summary",
     **{
@@ -96,7 +104,7 @@ def _union_page_lists(*vals: Any) -> List[int] | None:
 
 def _merge_top_level_pages(acc: Dict[str, Any], batch: Dict[str, Any]) -> None:
     """Union ``*_pages`` arrays from ``batch`` into ``acc``."""
-    for key in TOP_LEVEL_STRING_KEYS:
+    for key in (*TOP_LEVEL_STRING_KEYS, *OPTIONAL_STRING_KEYS):
         pk = f"{key}_pages"
         if pk not in batch:
             continue
@@ -433,6 +441,12 @@ def merge_tender_partial(
         accumulated,
         batch_partial,
         TOP_LEVEL_STRING_KEYS,
+        merge_mode=merge_mode,
+    )
+    _merge_strings(
+        accumulated,
+        batch_partial,
+        OPTIONAL_STRING_KEYS,
         merge_mode=merge_mode,
     )
     _merge_top_level_pages(accumulated, batch_partial)

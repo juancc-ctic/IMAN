@@ -225,6 +225,9 @@ def tender_llm_enrichment(
                     pages_meta,
                 )
             t.enrichment = data
+            ep = data.get("execution_period")
+            if ep and isinstance(ep, str):
+                t.execution_period = ep.strip() or None
             updated += 1
     total_s = time.perf_counter() - pipeline_start
     context.log.info(
@@ -295,12 +298,13 @@ def tender_triage(
             t.triage_status = result.get("status")
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             context.log.info(
-                "[%d/%d] id=%r status=%r score=%s elapsed=%.0f ms",
+                "[%d/%d] id=%r status=%r score=%s dims=%d elapsed=%.0f ms",
                 i,
                 n,
                 t.id,
                 result.get("status"),
                 result.get("overall_score"),
+                len(result.get("dimensions") or []),
                 elapsed_ms,
             )
             status_key = result.get("status", "neutral")
