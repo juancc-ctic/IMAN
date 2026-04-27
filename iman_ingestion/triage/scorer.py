@@ -1,4 +1,4 @@
-"""Tender triage scorer: evaluates enrichment against the company profile."""
+"""Tender and EU item triage scorer: evaluates content against the company profile."""
 
 from __future__ import annotations
 
@@ -9,7 +9,12 @@ from openai import OpenAI
 
 from iman_ingestion.llm.client import parse_llm_json_object, chat_model_name
 from iman_ingestion.triage.company_profile import CompanyProfile
-from iman_ingestion.triage.triage_prompt import TRIAGE_SYSTEM_PROMPT, build_triage_user_message
+from iman_ingestion.triage.triage_prompt import (
+    TRIAGE_SYSTEM_PROMPT,
+    EU_TRIAGE_SYSTEM_PROMPT,
+    build_triage_user_message,
+    build_eu_triage_user_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,54 +53,33 @@ def _status_from_score(score: float) -> str:
     return "potential_discard"
 
 
-def evaluate_tender(
-    tender_id: str,
-    title: str,
-    party_name: str,
-    tender_link: str,
-    enrichment: dict[str, Any] | None,
+def _run_triage_llm_call(
+    item_id: str,
+    system_prompt: str,
+    user_msg: str,
     llm_client: OpenAI,
     company_profile: CompanyProfile,
 ) -> dict[str, Any]:
-    """Evaluate a single tender and return a triage result dict.
-
-    This function has no Dagster dependencies and is fully unit-testable.
-    """
-    if not enrichment or enrichment.get("parse_error"):
-        return {
-            "status": "neutral",
-            "overall_score": None,
-            "dimensions": [],
-            "human_summary": "Licitación sin enriquecimiento LLM; requiere revisión manual.",
-        }
-
-    user_msg = build_triage_user_message(
-        title=title,
-        party_name=party_name,
-        tender_link=tender_link,
-        enrichment=enrichment,
-        company_profile=company_profile,
-    )
-
+    """Call the LLM, parse the JSON response, coerce scores, and return the result dict."""
     raw_content = ""
     try:
         response = llm_client.chat.completions.create(
             model=chat_model_name(),
             messages=[
-                {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
             temperature=_TRIAGE_TEMPERATURE,
         )
         raw_content = response.choices[0].message.content or ""
-        logger.debug("Triage LLM raw for %r: %s", tender_id, raw_content[:500])
+        logger.debug("Triage LLM raw for %r: %s", item_id, raw_content[:500])
         result = parse_llm_json_object(raw_content)
     except Exception as exc:
-        logger.warning("Triage LLM parse failed for %r: %s | raw=%r", tender_id, exc, raw_content[:300])
+        logger.warning("Triage LLM parse failed for %r: %s | raw=%r", item_id, exc, raw_content[:300])
         result = {}
 
     if not result.get("dimensions"):
-        logger.warning("Triage LLM returned no dimensions for %r | raw=%r", tender_id, raw_content[:500])
+        logger.warning("Triage LLM returned no dimensions for %r | raw=%r", item_id, raw_content[:500])
 
     raw_dims: list = result.get("dimensions") or []
     dimensions: list[dict] = []
@@ -126,3 +110,68 @@ def evaluate_tender(
         "dimensions": dimensions,
         "human_summary": str(result.get("human_summary") or "").strip(),
     }
+
+
+def evaluate_tender(
+    tender_id: str,
+    title: str,
+    party_name: str,
+    tender_link: str,
+    enrichment: dict[str, Any] | None,
+    llm_client: OpenAI,
+    company_profile: CompanyProfile,
+) -> dict[str, Any]:
+    """Evaluate a single tender and return a triage result dict.
+
+    This function has no Dagster dependencies and is fully unit-testable.
+    """
+    if not enrichment or enrichment.get("parse_error"):
+        return {
+            "status": "neutral",
+            "overall_score": None,
+            "dimensions": [],
+            "human_summary": "Licitación sin enriquecimiento LLM; requiere revisión manual.",
+        }
+
+    user_msg = build_triage_user_message(
+        title=title,
+        party_name=party_name,
+        tender_link=tender_link,
+        enrichment=enrichment,
+        company_profile=company_profile,
+    )
+    return _run_triage_llm_call(tender_id, TRIAGE_SYSTEM_PROMPT, user_msg, llm_client, company_profile)
+
+
+def evaluate_eu_item(
+    reference: str,
+    title: str,
+    kind: str,
+    url: str | None,
+    deadline_date: str | None,
+    embed_text: str | None,
+    llm_client: OpenAI,
+    company_profile: CompanyProfile,
+) -> dict[str, Any]:
+    """Evaluate a single EU item and return a triage result dict.
+
+    This function has no Dagster dependencies and is fully unit-testable.
+    """
+    if not embed_text:
+        return {
+            "status": "neutral",
+            "overall_score": None,
+            "dimensions": [],
+            "human_summary": "EU item has no embed_text; requires manual review.",
+        }
+
+    user_msg = build_eu_triage_user_message(
+        reference=reference,
+        kind=kind,
+        title=title,
+        url=url,
+        deadline_date=deadline_date,
+        embed_text=embed_text,
+        company_profile=company_profile,
+    )
+    return _run_triage_llm_call(reference, EU_TRIAGE_SYSTEM_PROMPT, user_msg, llm_client, company_profile)

@@ -1,8 +1,9 @@
-"""Dagster assets: EU topics and calls ingestion, persistence, and embeddings."""
+"""Dagster assets: EU topics and calls ingestion, persistence, embeddings, and triage."""
 
 from __future__ import annotations
 
 import os
+import time
 from collections import Counter
 from typing import Any, Dict, List
 
@@ -12,7 +13,8 @@ from sqlalchemy import select
 from iman_ingestion.db.models import EuItem
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.eu.client import DEFAULT_BASE_URL, fetch_eu_datasets
-from iman_ingestion.llm.client import embed_texts, get_embeddings_client
+from iman_ingestion.llm.client import chat_model_name, embed_texts, get_embeddings_client, get_llm_client
+from iman_ingestion.triage import evaluate_eu_item, load_company_profile
 
 
 @asset(group_name="eu", compute_kind="python")
@@ -118,3 +120,75 @@ def eu_item_embeddings(
     context.log.info("eu_item_embeddings: embedded %d items", embedded)
     context.add_output_metadata({"embedded": embedded})
     return embedded
+
+
+@asset(group_name="eu", compute_kind="openai")
+def eu_item_triage(
+    context,
+    eu_item_embeddings: int,
+) -> int:
+    """Evaluate each EU item against the company profile and assign a triage status."""
+    if os.environ.get("IMAN_SKIP_TRIAGE", "").lower() in ("1", "true", "yes"):
+        context.log.info("IMAN_SKIP_TRIAGE is set; skipping EU item triage.")
+        return 0
+
+    company_profile = load_company_profile()
+    llm_client = get_llm_client()
+    pipeline_start = time.perf_counter()
+    counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
+
+    with session_scope() as session:
+        items = session.scalars(
+            select(EuItem).where(EuItem.embed_text.isnot(None))
+        ).all()
+        n = len(items)
+        context.log.info(
+            "eu_item_triage: evaluating %d EU item(s) with embed_text; model=%r",
+            n,
+            chat_model_name(),
+        )
+        for i, item in enumerate(items, start=1):
+            t0 = time.perf_counter()
+            try:
+                result = evaluate_eu_item(
+                    reference=item.reference,
+                    title=item.title or "",
+                    kind=item.kind,
+                    url=item.url,
+                    deadline_date=item.deadline_date,
+                    embed_text=item.embed_text,
+                    llm_client=llm_client,
+                    company_profile=company_profile,
+                )
+            except Exception as exc:
+                context.log.warning("[%d/%d] triage failed for %r: %s", i, n, item.reference, exc)
+                counters["skipped"] += 1
+                continue
+            item.triage = result
+            item.triage_status = result.get("status")
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            context.log.info(
+                "[%d/%d] ref=%r status=%r score=%s dims=%d elapsed=%.0f ms",
+                i,
+                n,
+                item.reference,
+                result.get("status"),
+                result.get("overall_score"),
+                len(result.get("dimensions") or []),
+                elapsed_ms,
+            )
+            status_key = result.get("status", "neutral")
+            counters[status_key] = counters.get(status_key, 0) + 1
+
+    total_s = time.perf_counter() - pipeline_start
+    context.log.info("eu_item_triage finished in %.2f s: %s", total_s, counters)
+    context.add_output_metadata(
+        {
+            "recommended": counters["recommended"],
+            "neutral": counters["neutral"],
+            "potential_discard": counters["potential_discard"],
+            "skipped": counters["skipped"],
+            "total_seconds": round(total_s, 3),
+        }
+    )
+    return counters["recommended"] + counters["neutral"] + counters["potential_discard"]

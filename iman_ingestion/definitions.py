@@ -14,6 +14,7 @@ from dagster import (
 
 from iman_ingestion.assets.eu_pipeline import (
     eu_item_embeddings,
+    eu_item_triage,
     persist_eu_items,
     raw_eu_ingestion,
 )
@@ -73,6 +74,7 @@ defs = Definitions(
         raw_eu_ingestion,
         persist_eu_items,
         eu_item_embeddings,
+        eu_item_triage,
     ],
     resources={
         "iman_ingestion": _iman_ingestion_resource(),
