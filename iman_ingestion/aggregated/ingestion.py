@@ -350,6 +350,8 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
         "party_name": None,
         "tax_exclusive_amount": None,
         "estimated_overall_contract_amount": None,
+        "pcap_url": None,
+        "ppt_url": None,
     }
 
     id_el = entry_el.find(f".//{ATOM}id")
@@ -372,6 +374,10 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
     est_amount_el = entry_el.find(f".//{CBC}EstimatedOverallContractAmount")
     if est_amount_el is not None:
         data["estimated_overall_contract_amount"] = (est_amount_el.text or "").strip()
+
+    docs_by_name = {name: url for name, url in extract_technical_documents_from_entry(entry_el)}
+    data["pcap_url"] = docs_by_name.get("PCAP.pdf")
+    data["ppt_url"] = docs_by_name.get("PPT.pdf")
 
     return data
 

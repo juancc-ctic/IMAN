@@ -137,13 +137,18 @@ def eu_item_triage(
     pipeline_start = time.perf_counter()
     counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
 
+    TRIAGE_STATUSES = ("31094502", "31094501")  # Open for submission, Forthcoming
+
     with session_scope() as session:
         items = session.scalars(
-            select(EuItem).where(EuItem.embed_text.isnot(None))
+            select(EuItem).where(
+                EuItem.embed_text.isnot(None),
+                EuItem.status.in_(TRIAGE_STATUSES),
+            )
         ).all()
         n = len(items)
         context.log.info(
-            "eu_item_triage: evaluating %d EU item(s) with embed_text; model=%r",
+            "eu_item_triage: evaluating %d EU item(s) with embed_text and active status; model=%r",
             n,
             chat_model_name(),
         )

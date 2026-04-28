@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -131,6 +132,8 @@ def persist_tenders(
                 estimated_overall_contract_amount=row.get(
                     "estimated_overall_contract_amount"
                 ),
+                pcap_url=row.get("pcap_url"),
+                ppt_url=row.get("ppt_url"),
             )
             session.merge(tender)
             count += 1
@@ -229,6 +232,7 @@ def tender_llm_enrichment(
             if ep and isinstance(ep, str):
                 t.execution_period = ep.strip() or None
             updated += 1
+            shutil.rmtree(downloads / folder, ignore_errors=True)
     total_s = time.perf_counter() - pipeline_start
     context.log.info(
         "tender_llm_enrichment finished: enriched=%d in %.2f s",

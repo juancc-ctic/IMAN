@@ -37,6 +37,8 @@ class Tender(Base):
         String(64),
         nullable=True,
     )
+    pcap_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ppt_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     enrichment: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     summary_embedding: Mapped[Optional[List[float]]] = mapped_column(
