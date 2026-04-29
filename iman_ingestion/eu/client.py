@@ -58,6 +58,7 @@ _TOPIC_DISPLAY_FIELDS = [
     "reference",
     "callccm2Id",
     "status",
+    "ccm2Id",
     "projectAcronym",
     "startDate",
     "deadlineDate",
@@ -312,11 +313,13 @@ def _normalize_hit(hit: Mapping[str, Any], kind: str) -> Dict[str, Any]:
         embed_text = "\n\n".join(p for p in parts if p).strip()
         callccm2id = _first_str(flat.get("callccm2Id"))
         url = _PORTAL_CALL_URL.format(callccm2Id=callccm2id) if callccm2id else None
+        identifier = callccm2id
     else:
         parts = [flat.get("descriptionByte") or "", flat.get("topicConditions") or ""]
         embed_text = "\n\n".join(p for p in parts if p).strip()
-        url = _PORTAL_TOPIC_URL.format(identifier=_first_str(flat.get("identifier"))) if flat.get("identifier") else None
-    identifier = _first_str(flat.get("identifier"))
+        api_identifier = _first_str(flat.get("identifier"))
+        url = _PORTAL_TOPIC_URL.format(identifier=api_identifier) if api_identifier else None
+        identifier = _first_str(flat.get("ccm2Id"))
     return {
         "reference": hit.get("reference"),
         "kind": kind,

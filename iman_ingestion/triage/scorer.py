@@ -92,7 +92,7 @@ def _run_triage_llm_call(
             "reasoning": str(item.get("reasoning") or "").strip(),
         })
 
-    if any(d["score"] == 0 for d in dimensions):
+    if any(d["score"] <= 1 for d in dimensions):
         return {
             "status": "potential_discard",
             "overall_score": 0.0,
