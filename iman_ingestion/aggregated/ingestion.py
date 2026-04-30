@@ -43,6 +43,7 @@ ALLOWED_TYPE_CODE = "2"
 ALLOWED_SUBTYPE_CODES = frozenset(
     {"5", "8", "9", "11", "12", "20", "23", "24", "25", "27"}
 )
+CPV_IT_SERVICES_PREFIX = "72"  # CPV 72000000–72999999: Servicios TI
 
 
 @dataclass
@@ -225,6 +226,16 @@ def entry_has_allowed_type_and_subtype(entry_el: ET.Element) -> bool:
             if val == ALLOWED_TYPE_CODE:
                 has_type = True
     return has_type and has_subtype
+
+
+def entry_has_it_services_cpv(entry_el: ET.Element) -> bool:
+    """True if entry has at least one CPV code in the IT Services range (72xxxxxx)."""
+    for elem in entry_el.iter():
+        if _xml_local_name(elem.tag or "") == "ItemClassificationCode":
+            code = (elem.text or "").strip()
+            if code.startswith(CPV_IT_SERVICES_PREFIX):
+                return True
+    return False
 
 
 def entry_has_allowed_contract_folder_status(entry_el: ET.Element) -> bool:
@@ -437,6 +448,8 @@ def run_ingestion(
                 continue
             if not entry_has_allowed_type_and_subtype(entry):
                 continue
+            if not entry_has_it_services_cpv(entry):
+                continue
 
             tender_info = extract_tender_data(entry)
             tenders_data.append(tender_info)
@@ -445,6 +458,12 @@ def run_ingestion(
             entry_dir = config.output_dir / folder_name
             detail_url = get_entry_detail_link(entry)
             docs = extract_technical_documents_from_entry(entry)
+            logger.info(
+                "Processing tender [%s] (%d doc(s)) title=%r",
+                folder_name,
+                len(docs),
+                (tender_info.get("title") or "")[:120],
+            )
             for name, url in docs:
                 if not url:
                     continue
@@ -459,14 +478,17 @@ def run_ingestion(
                         if detail_url:
                             print(f"    Tender page: {detail_url}")
                     continue
+                logger.info("Downloading [%s] %s -> %s", folder_name, name, dest)
                 success, msg = try_download(url, dest)
                 if success:
                     ok += 1
                     if verbose:
                         print(f"[OK] {name} -> {dest}")
+                    logger.info("[OK] [%s] %s", folder_name, name)
                 else:
                     if verbose:
                         print(f"[FAIL] {name}: {msg}")
+                    logger.warning("[FAIL] [%s] %s: %s", folder_name, name, msg)
                     if detail_url:
                         failed_with_detail.append((name, detail_url))
             if hit_limit:
