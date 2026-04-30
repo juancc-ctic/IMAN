@@ -9,3 +9,8 @@ storage:
       hostname: postgres
       db_name: dagster
       port: 5432
+
+python_logs:
+  python_log_level: INFO
+  managed_python_loggers:
+    - iman_ingestion
