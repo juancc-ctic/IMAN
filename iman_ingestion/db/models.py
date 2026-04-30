@@ -45,6 +45,7 @@ class Tender(Base):
         Vector(_embedding_dimensions()),
         nullable=True,
     )
+    submission_deadline: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     execution_period: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     triage_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)

@@ -132,6 +132,7 @@ def persist_tenders(
                 estimated_overall_contract_amount=row.get(
                     "estimated_overall_contract_amount"
                 ),
+                submission_deadline=row.get("submission_deadline"),
                 pcap_url=row.get("pcap_url"),
                 ppt_url=row.get("ppt_url"),
             )

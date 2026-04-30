@@ -278,6 +278,24 @@ def _extract_docs_from_ref_element(
     return (name, url)
 
 
+def extract_submission_deadline_from_entry(entry_el: ET.Element) -> Optional[str]:
+    """Return submission deadline as 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS', or None."""
+    CBC = f"{{{CBC_NS}}}"
+    CAC = f"{{{CAC_NS}}}"
+    period = entry_el.find(f".//{CAC}TenderSubmissionDeadlinePeriod")
+    if period is None:
+        return None
+    date_el = period.find(f"{CBC}EndDate")
+    time_el = period.find(f"{CBC}EndTime")
+    date_str = (date_el.text or "").strip() if date_el is not None else ""
+    time_str = (time_el.text or "").strip() if time_el is not None else ""
+    if not date_str:
+        return None
+    if time_str:
+        return f"{date_str}T{time_str}"
+    return date_str
+
+
 def extract_technical_documents_from_entry(
     entry_el: ET.Element,
 ) -> List[Tuple[str, str]]:
@@ -361,6 +379,7 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
         "party_name": None,
         "tax_exclusive_amount": None,
         "estimated_overall_contract_amount": None,
+        "submission_deadline": extract_submission_deadline_from_entry(entry_el),
         "pcap_url": None,
         "ppt_url": None,
     }
