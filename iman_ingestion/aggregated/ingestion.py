@@ -38,7 +38,7 @@ FEED_HEADERS = {
 
 FEED_FETCH_TIMEOUT_SEC = 120
 
-ALLOWED_CONTRACT_FOLDER_STATUSES = frozenset({"PRE", "PUB", "EV"})
+ALLOWED_CONTRACT_FOLDER_STATUSES = frozenset({"PRE", "PUB"})
 ALLOWED_TYPE_CODE = "2"
 ALLOWED_SUBTYPE_CODES = frozenset(
     {"5", "8", "9", "11", "12", "20", "23", "24", "25", "27"}
@@ -239,7 +239,7 @@ def entry_has_it_services_cpv(entry_el: ET.Element) -> bool:
 
 
 def entry_has_allowed_contract_folder_status(entry_el: ET.Element) -> bool:
-    """True if ContractFolderStatusCode is PRE, PUB or EV."""
+    """True if ContractFolderStatusCode is PRE or PUB."""
     for elem in entry_el.iter():
         tag = elem.tag or ""
         if "ContractFolderStatusCode" not in tag:
@@ -309,6 +309,7 @@ def extract_technical_documents_from_entry(
         if doc is None:
             continue
         _original_name, url = doc
+        url = get_document_url_from_uri_text(url)
         output_name = "PCAP.pdf" if "LegalDocumentReference" in tag else "PPT.pdf"
         results.append((output_name, url))
     return results
