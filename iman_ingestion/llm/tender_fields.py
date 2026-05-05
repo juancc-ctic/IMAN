@@ -394,7 +394,11 @@ def _merge_discard_review(
             ev_b = be.get("evidence")
             if _nonempty_str(ev_b):
                 ev_m = me.get("evidence")
-                if not _nonempty_str(ev_m):
+                if merge_mode == "batch_overwrites":
+                    # Later batches have more page context — replace, don't append.
+                    # Appending causes contradictory strings like "not mentioned\n<concrete finding>".
+                    me["evidence"] = ev_b.strip()
+                elif not _nonempty_str(ev_m):
                     me["evidence"] = ev_b.strip()
                 elif ev_b.strip() not in ev_m:
                     me["evidence"] = f"{ev_m.strip()}\n{ev_b.strip()}"
