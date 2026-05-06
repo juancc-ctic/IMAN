@@ -18,7 +18,7 @@ from iman_ingestion.triage.triage_prompt import (
 
 logger = logging.getLogger(__name__)
 
-_THRESHOLD_RECOMMENDED = 3.0
+_THRESHOLD_RECOMMENDED = 4.0
 _THRESHOLD_NEUTRAL = 2.0
 _TRIAGE_TEMPERATURE = 0.1
 
