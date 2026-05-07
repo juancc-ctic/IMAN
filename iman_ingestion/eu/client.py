@@ -64,10 +64,12 @@ _TOPIC_DISPLAY_FIELDS = [
     "deadlineDate",
     "deadlineModel",
     "frameworkProgramme",
+    "programmePeriod",
     "typesOfAction",
     "keywords",
     "tags",
     "programmeDivision",
+    "missionGroup",
     "budgetOverview",
     "descriptionByte",
 ]
@@ -95,7 +97,7 @@ _QUERY_HORIZON_TOPICS: Mapping[str, Any] = {
     "bool": {
         "must": [
             {"terms": {"type": ["1"]}},
-            {"terms": {"status": ["31094501", "31094502", "31094503"]}},
+            {"terms": {"status": ["31094501", "31094502"]}}, # 31094501 == Forthcoming, 31094502 == Open for submission
             {"term": {"programmePeriod": "2021 - 2027"}},
             {"terms": {"frameworkProgramme": ["43108390"]}},
             {
@@ -121,7 +123,7 @@ _QUERY_NON_HORIZON_TOPICS: Mapping[str, Any] = {
     "bool": {
         "must": [
             {"terms": {"type": ["1"]}},
-            {"terms": {"status": ["31094501", "31094502", "31094503"]}},
+            {"terms": {"status": ["31094501", "31094502"]}},
             {"term": {"programmePeriod": "2021 - 2027"}},
             {
                 "terms": {
@@ -142,7 +144,30 @@ _QUERY_HORIZON_CALLS: Mapping[str, Any] = {
         "must": [
             {"terms": {"type": ["8"]}},
             {"term": {"programmePeriod": "2021 - 2027"}},
+            {"terms": {"status": ["31094501", "31094502"]}}, # 31094501 == Forthcoming, 31094502 == Open for submission
             {"terms": {"frameworkProgramme": ["43108390"]}},
+        ]
+    }
+}
+
+_QUERY_HORIZON_MISSIONS: Mapping[str, Any] = {
+    "bool": {
+        "must": [
+            {"terms": {"type": ["1"]}},
+            {"terms": {"status": ["31094501", "31094502"]}},
+            {"term": {"programmePeriod": "2021 - 2027"}},
+            {"terms": {"frameworkProgramme": ["43108390"]}},
+            {
+                "terms": {
+                    "missionGroup": [
+                        "45355166",
+                        "45355172",
+                        "45355175",
+                        "45355169",
+                        "45355178",
+                    ]
+                }
+            },
         ]
     }
 }
@@ -153,6 +178,7 @@ _DATASETS = [
     ("horizon-topic", _QUERY_HORIZON_TOPICS, _TOPIC_DISPLAY_FIELDS, _SORT_TOPICS),
     ("non-horizon-topic", _QUERY_NON_HORIZON_TOPICS, _TOPIC_DISPLAY_FIELDS, _SORT_TOPICS),
     ("horizon-call", _QUERY_HORIZON_CALLS, _CALL_DISPLAY_FIELDS, _SORT_CALLS),
+    ("horizon-mission", _QUERY_HORIZON_MISSIONS, _TOPIC_DISPLAY_FIELDS, _SORT_TOPICS),
 ]
 
 # ---------------------------------------------------------------------------
@@ -296,6 +322,51 @@ def _first_str(val: Any) -> Optional[str]:
     return val or None
 
 
+_STATUS_LABELS: Dict[str, str] = {
+    "31094501": "Forthcoming",
+    "31094502": "Open",
+    "31094503": "Closed",
+}
+
+_FRAMEWORK_PROGRAMME_LABELS: Dict[str, str] = {
+    "43108390": "Horizon Europe (HORIZON)",
+    "43152860": "Digital Europe Programme (DIGITAL)",
+    "44181033": "Europe Defence Fund (EDF)",
+    "43252405": "Programme for the Environment and Climate Action (LIFE)",
+    "43251589": "Citizens, Equality, Rights and Values Programme (CERV)",
+}
+
+_PROGRAMME_DIVISION_LABELS: Dict[str, str] = {
+    "43108514": "INFRA - Research Infrastructures",
+    "43108557": "CL1 - Health",
+    "43118846": "CL2 - Culture, Creativity and Inclusive Society",
+    "43118971": "CL3 - Civil Security for Society",
+    "43120193": "CL4 - Digital, Industry and Space",
+    "43120821": "CL5 - Climate, Energy and Mobility",
+    "43121563": "CL6 - Food, Bioeconomy, Natural Resources, Agriculture and Environment",
+    "43121707": "WIDERA - Widening Participation and Spreading Excellence",
+}
+
+_PROGRAMME_PART_MAP: Dict[str, str] = {
+    "43108514": "Excellent Science",
+    "43108557": "Global Challenges and European Industrial Competitiveness",
+    "43118846": "Global Challenges and European Industrial Competitiveness",
+    "43118971": "Global Challenges and European Industrial Competitiveness",
+    "43120193": "Global Challenges and European Industrial Competitiveness",
+    "43120821": "Global Challenges and European Industrial Competitiveness",
+    "43121563": "Global Challenges and European Industrial Competitiveness",
+    "43121707": "Widening Participation and Strengthening the European Research Area",
+}
+
+_MISSION_GROUP_LABELS: Dict[str, str] = {
+    "45355166": "CLIMA - Adaptation to Climate Change",
+    "45355172": "CANCER",
+    "45355175": "CIT - Climate Neutral and Smart Cities",
+    "45355169": "OCEAN - Ocean, Seas and Waters",
+    "45355178": "SOIL - Soil Health and Food",
+}
+
+
 _PORTAL_TOPIC_URL = (
     "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
     "screen/opportunities/topic-details/{identifier}"
@@ -320,15 +391,35 @@ def _normalize_hit(hit: Mapping[str, Any], kind: str) -> Dict[str, Any]:
         api_identifier = _first_str(flat.get("identifier"))
         url = _PORTAL_TOPIC_URL.format(identifier=api_identifier) if api_identifier else None
         identifier = _first_str(flat.get("ccm2Id"))
+    raw_status = _first_str(flat.get("status"))
+    status = _STATUS_LABELS.get(str(raw_status), raw_status) if raw_status else None
+
+    raw_fp = _first_str(flat.get("frameworkProgramme"))
+    framework_programme = _FRAMEWORK_PROGRAMME_LABELS.get(str(raw_fp), raw_fp) if raw_fp else None
+
+    raw_div = _first_str(flat.get("programmeDivision"))
+    programme_division = _PROGRAMME_DIVISION_LABELS.get(str(raw_div), raw_div) if raw_div else None
+    programme_part = _PROGRAMME_PART_MAP.get(str(raw_div)) if raw_div else None
+
+    raw_mission = _first_str(flat.get("missionGroup"))
+    mission_group = _MISSION_GROUP_LABELS.get(str(raw_mission), raw_mission) if raw_mission else None
+    if mission_group:
+        programme_part = "Missions"
+
     return {
         "reference": hit.get("reference"),
         "kind": kind,
         "url": url,
         "identifier": identifier,
         "title": _first_str(flat.get("title")),
-        "status": _first_str(flat.get("status")),
+        "status": status,
         "start_date": _first_str(flat.get("startDate")),
         "deadline_date": _first_str(flat.get("deadlineDate")),
+        "framework_programme": framework_programme,
+        "programme_period": _first_str(flat.get("programmePeriod")),
+        "programme_division": programme_division,
+        "programme_part": programme_part,
+        "mission_group": mission_group,
         "metadata": flat,
         "embed_text": embed_text,
     }
@@ -346,10 +437,13 @@ def fetch_eu_datasets(
     page_delay_s: float = 0.0,
     max_pages: int = 10_000,
 ) -> List[Dict[str, Any]]:
-    """Fetch all three EU Search API datasets and return a flat list of normalized items.
+    """Fetch all EU Search API datasets and return a flat list of normalized items.
 
     Each item dict has keys: reference, kind, url, identifier, title, status,
-    start_date, deadline_date, metadata (JSONB), embed_text (plain text for embedding).
+    start_date, deadline_date, framework_programme, programme_period, programme_division,
+    programme_part, mission_group, metadata (JSONB), embed_text (plain text for embedding).
+    All code fields (status, framework_programme, programme_division, mission_group) are
+    translated to human-readable labels.
     """
     all_items: List[Dict[str, Any]] = []
     with requests.Session() as session:

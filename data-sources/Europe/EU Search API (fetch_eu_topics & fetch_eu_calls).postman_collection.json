@@ -23,7 +23,7 @@
           "formdata": [
             {
               "key": "query",
-              "value": "{\"bool\": {\"must\": [{\"terms\": {\"type\": [\"1\"]}}, {\"terms\": {\"status\": [\"31094501\", \"31094502\", \"31094503\"]}}, {\"term\": {\"programmePeriod\": \"2021 - 2027\"}}, {\"terms\": {\"frameworkProgramme\": [\"43108390\"]}}, {\"terms\": {\"programmeDivision\": [43108557, 43118846, 43118971, 43120193, 43120821, 43121563, 43108541, 43121707, 43108514]}}]}}",
+              "value": "{\"bool\": {\"must\": [{\"terms\": {\"type\": [\"1\"]}}, {\"terms\": {\"status\": [\"31094501\", \"31094502\"]}}, {\"term\": {\"programmePeriod\": \"2021 - 2027\"}}, {\"terms\": {\"frameworkProgramme\": [\"43108390\"]}}, {\"terms\": {\"programmeDivision\": [43108557, 43118846, 43118971, 43120193, 43120821, 43121563, 43108541, 43121707, 43108514]}}]}}",
               "type": "text",
               "contentType": "application/json",
               "description": "Elasticsearch-style query (type 1 = topics). Set Content-Type to application/json in UI."

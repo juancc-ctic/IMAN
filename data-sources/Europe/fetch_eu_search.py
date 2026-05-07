@@ -72,7 +72,7 @@ QUERY_HORIZON_TOPICS: Mapping[str, Any] = {
     "bool": {
         "must": [
             {"terms": {"type": ["1"]}},
-            {"terms": {"status": ["31094501", "31094502", "31094503"]}},
+            {"terms": {"status": ["31094501", "31094502"]}},
             {"term": {"programmePeriod": "2021 - 2027"}},
             {"terms": {"frameworkProgramme": ["43108390"]}},
             {
@@ -98,7 +98,7 @@ QUERY_NON_HORIZON_TOPICS: Mapping[str, Any] = {
     "bool": {
         "must": [
             {"terms": {"type": ["1"]}},
-            {"terms": {"status": ["31094501", "31094502", "31094503"]}},
+            {"terms": {"status": ["31094501", "31094502"]}}, # 31094501 == Forthcoming, 31094502 == Open for submission
             {"term": {"programmePeriod": "2021 - 2027"}},
             {
                 "terms": {

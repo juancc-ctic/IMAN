@@ -60,6 +60,11 @@ def persist_eu_items(context, raw_eu_ingestion: List[Dict[str, Any]]) -> int:
                 status=row.get("status"),
                 start_date=row.get("start_date"),
                 deadline_date=row.get("deadline_date"),
+                framework_programme=row.get("framework_programme"),
+                programme_period=row.get("programme_period"),
+                programme_division=row.get("programme_division"),
+                programme_part=row.get("programme_part"),
+                mission_group=row.get("mission_group"),
                 item_metadata=row.get("metadata"),
                 embed_text=row.get("embed_text") or None,
             )
@@ -137,7 +142,7 @@ def eu_item_triage(
     pipeline_start = time.perf_counter()
     counters: Dict[str, int] = {"evaluated": 0, "skipped": 0}
 
-    TRIAGE_STATUSES = ("31094502", "31094501")  # Open for submission, Forthcoming
+    TRIAGE_STATUSES = ("Open", "Forthcoming")
 
     with session_scope() as session:
         items = session.scalars(

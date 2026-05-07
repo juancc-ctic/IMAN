@@ -73,6 +73,11 @@ class EuItem(Base):
     status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     start_date: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     deadline_date: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    framework_programme: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    programme_period: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    programme_division: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    programme_part: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mission_group: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     item_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column("metadata", JSONB, nullable=True)
     embed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding: Mapped[Optional[List[float]]] = mapped_column(
