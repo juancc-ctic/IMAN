@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -48,7 +48,7 @@ class Tender(Base):
     submission_deadline: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     execution_period: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    triage_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    triage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -58,39 +58,6 @@ class Tender(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
-
-    chunks: Mapped[List["DocumentChunk"]] = relationship(
-        "DocumentChunk",
-        back_populates="tender",
-        cascade="all, delete-orphan",
-    )
-
-
-class DocumentChunk(Base):
-    """Text chunk with optional embedding vector."""
-
-    __tablename__ = "document_chunks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tender_id: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("tenders.id", ondelete="CASCADE"),
-        index=True,
-    )
-    source_kind: Mapped[str] = mapped_column(String(32))
-    source_filename: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    chunk_index: Mapped[int] = mapped_column(Integer)
-    text: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[Optional[List[float]]] = mapped_column(
-        Vector(_embedding_dimensions()),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-    )
-
-    tender: Mapped["Tender"] = relationship("Tender", back_populates="chunks")
 
 
 class EuItem(Base):
@@ -113,7 +80,7 @@ class EuItem(Base):
         nullable=True,
     )
     triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    triage_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    triage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

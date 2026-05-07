@@ -18,8 +18,6 @@ from iman_ingestion.triage.triage_prompt import (
 
 logger = logging.getLogger(__name__)
 
-_THRESHOLD_RECOMMENDED = 4.0
-_THRESHOLD_NEUTRAL = 2.0
 _TRIAGE_TEMPERATURE = 0.1
 
 
@@ -43,14 +41,6 @@ def _weighted_score(dimensions: list[dict], weight_map: dict[str, float]) -> flo
     if total_weight == 0:
         return None
     return round(sum(s * w for s, w in items) / total_weight, 2)
-
-
-def _status_from_score(score: float) -> str:
-    if score >= _THRESHOLD_RECOMMENDED:
-        return "recommended"
-    if score >= _THRESHOLD_NEUTRAL:
-        return "neutral"
-    return "potential_discard"
 
 
 def _run_triage_llm_call(
@@ -94,7 +84,6 @@ def _run_triage_llm_call(
 
     if any(d["score"] <= 1 for d in dimensions):
         return {
-            "status": "potential_discard",
             "overall_score": 0.0,
             "dimensions": dimensions,
             "human_summary": str(result.get("human_summary") or "").strip(),
@@ -102,10 +91,8 @@ def _run_triage_llm_call(
 
     weight_map = {d.name: d.weight for d in company_profile.triage_dimensions}
     overall = _weighted_score(dimensions, weight_map)
-    status = _status_from_score(overall) if overall is not None else "neutral"
 
     return {
-        "status": status,
         "overall_score": overall,
         "dimensions": dimensions,
         "human_summary": str(result.get("human_summary") or "").strip(),
@@ -127,7 +114,6 @@ def evaluate_tender(
     """
     if not enrichment or enrichment.get("parse_error"):
         return {
-            "status": "neutral",
             "overall_score": None,
             "dimensions": [],
             "human_summary": "Licitación sin enriquecimiento LLM; requiere revisión manual.",
@@ -159,7 +145,6 @@ def evaluate_eu_item(
     """
     if not embed_text:
         return {
-            "status": "neutral",
             "overall_score": None,
             "dimensions": [],
             "human_summary": "EU item has no embed_text; requires manual review.",

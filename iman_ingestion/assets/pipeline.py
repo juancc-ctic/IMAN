@@ -265,7 +265,7 @@ def tender_triage(
     company_profile = load_company_profile()
     llm_client = get_llm_client()
     pipeline_start = time.perf_counter()
-    counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
+    counters: Dict[str, int] = {"evaluated": 0, "skipped": 0}
 
     rows: List[dict] = json.loads(
         Path(raw_aggregated_ingestion["json_path"]).read_text(encoding="utf-8")
@@ -300,33 +300,29 @@ def tender_triage(
                 counters["skipped"] += 1
                 continue
             t.triage = result
-            t.triage_status = result.get("status")
+            t.triage_score = result.get("overall_score")
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             context.log.info(
-                "[%d/%d] id=%r status=%r score=%s dims=%d elapsed=%.0f ms",
+                "[%d/%d] id=%r score=%s dims=%d elapsed=%.0f ms",
                 i,
                 n,
                 t.id,
-                result.get("status"),
                 result.get("overall_score"),
                 len(result.get("dimensions") or []),
                 elapsed_ms,
             )
-            status_key = result.get("status", "neutral")
-            counters[status_key] = counters.get(status_key, 0) + 1
+            counters["evaluated"] += 1
 
     total_s = time.perf_counter() - pipeline_start
     context.log.info("tender_triage finished in %.2f s: %s", total_s, counters)
     context.add_output_metadata(
         {
-            "recommended": counters["recommended"],
-            "neutral": counters["neutral"],
-            "potential_discard": counters["potential_discard"],
+            "evaluated": counters["evaluated"],
             "skipped": counters["skipped"],
             "total_seconds": round(total_s, 3),
         }
     )
-    return counters["recommended"] + counters["neutral"] + counters["potential_discard"]
+    return counters["evaluated"]
 
 
 @asset(group_name="iman", compute_kind="openai")

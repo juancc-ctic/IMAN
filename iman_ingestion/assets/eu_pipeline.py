@@ -135,7 +135,7 @@ def eu_item_triage(
     company_profile = load_company_profile()
     llm_client = get_llm_client()
     pipeline_start = time.perf_counter()
-    counters: Dict[str, int] = {"recommended": 0, "neutral": 0, "potential_discard": 0, "skipped": 0}
+    counters: Dict[str, int] = {"evaluated": 0, "skipped": 0}
 
     TRIAGE_STATUSES = ("31094502", "31094501")  # Open for submission, Forthcoming
 
@@ -170,30 +170,26 @@ def eu_item_triage(
                 counters["skipped"] += 1
                 continue
             item.triage = result
-            item.triage_status = result.get("status")
+            item.triage_score = result.get("overall_score")
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             context.log.info(
-                "[%d/%d] ref=%r status=%r score=%s dims=%d elapsed=%.0f ms",
+                "[%d/%d] ref=%r score=%s dims=%d elapsed=%.0f ms",
                 i,
                 n,
                 item.reference,
-                result.get("status"),
                 result.get("overall_score"),
                 len(result.get("dimensions") or []),
                 elapsed_ms,
             )
-            status_key = result.get("status", "neutral")
-            counters[status_key] = counters.get(status_key, 0) + 1
+            counters["evaluated"] += 1
 
     total_s = time.perf_counter() - pipeline_start
     context.log.info("eu_item_triage finished in %.2f s: %s", total_s, counters)
     context.add_output_metadata(
         {
-            "recommended": counters["recommended"],
-            "neutral": counters["neutral"],
-            "potential_discard": counters["potential_discard"],
+            "evaluated": counters["evaluated"],
             "skipped": counters["skipped"],
             "total_seconds": round(total_s, 3),
         }
     )
-    return counters["recommended"] + counters["neutral"] + counters["potential_discard"]
+    return counters["evaluated"]
