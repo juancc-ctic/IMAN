@@ -326,7 +326,7 @@ def tender_triage(
 
 
 @asset(group_name="iman", compute_kind="openai")
-def document_embeddings(
+def tender_embeddings(
     raw_aggregated_ingestion: Dict[str, Any],
     tender_llm_enrichment: int,
 ) -> int:

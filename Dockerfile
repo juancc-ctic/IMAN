@@ -11,7 +11,6 @@ COPY pyproject.toml README.md alembic.ini ./
 COPY alembic ./alembic
 COPY iman_ingestion ./iman_ingestion
 COPY company_profile.yaml ./
-COPY download_aggregated_docs.py ./
 COPY docker/entrypoint-user-code.sh ./docker/entrypoint-user-code.sh
 
 RUN chmod +x ./docker/entrypoint-user-code.sh && \

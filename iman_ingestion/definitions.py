@@ -19,7 +19,7 @@ from iman_ingestion.assets.eu_pipeline import (
     raw_eu_ingestion,
 )
 from iman_ingestion.assets.pipeline import (
-    document_embeddings,
+    tender_embeddings,
     persist_tenders,
     raw_aggregated_ingestion,
     tender_llm_enrichment,
@@ -70,7 +70,7 @@ defs = Definitions(
         persist_tenders,
         tender_llm_enrichment,
         tender_triage,
-        document_embeddings,
+        tender_embeddings,
         raw_eu_ingestion,
         persist_eu_items,
         eu_item_embeddings,

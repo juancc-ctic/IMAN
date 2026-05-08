@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from iman_ingestion.db.models import EuItem
 from iman_ingestion.db.session import session_scope
-from iman_ingestion.eu.client import DEFAULT_BASE_URL, fetch_eu_datasets
+from iman_ingestion.eu.client import ACTIVE_STATUSES, DEFAULT_BASE_URL, fetch_eu_datasets
 from iman_ingestion.llm.client import chat_model_name, embed_texts, get_embeddings_client, get_llm_client
 from iman_ingestion.triage import evaluate_eu_item, load_company_profile
 
@@ -82,14 +82,9 @@ def eu_item_embeddings(
     raw_eu_ingestion: List[Dict[str, Any]],
 ) -> int:
     """Generate and store one embedding per EU item (descriptionByte / description)."""
-    if os.environ.get("IMAN_SKIP_EMBEDDINGS", "").lower() in ("1", "true", "yes"):
-        context.log.info("IMAN_SKIP_EMBEDDINGS set; skipping EU embeddings.")
-        return 0
-
     batch_size = int(os.environ.get("IMAN_EMBED_BATCH_SIZE", "16"))
     embeddings_client = get_embeddings_client()
 
-    # Character limit to stay within the embedding model's token budget.
     # Arctic Embed L v2.0 caps at 8192 tokens; ~4 chars/token → 16 000 chars is safe.
     max_chars = int(os.environ.get("EU_EMBED_MAX_CHARS", "16000"))
 
@@ -103,7 +98,6 @@ def eu_item_embeddings(
 
     embedded = 0
     with session_scope() as session:
-        # Load all EuItem rows into identity map so updates are tracked.
         refs = [r["reference"] for r in embeddable]
         db_items: Dict[str, EuItem] = {
             item.reference: item
@@ -133,22 +127,16 @@ def eu_item_triage(
     eu_item_embeddings: int,
 ) -> int:
     """Evaluate each EU item against the company profile and assign a triage status."""
-    if os.environ.get("IMAN_SKIP_TRIAGE", "").lower() in ("1", "true", "yes"):
-        context.log.info("IMAN_SKIP_TRIAGE is set; skipping EU item triage.")
-        return 0
-
     company_profile = load_company_profile()
     llm_client = get_llm_client()
     pipeline_start = time.perf_counter()
     counters: Dict[str, int] = {"evaluated": 0, "skipped": 0}
 
-    TRIAGE_STATUSES = ("Open", "Forthcoming")
-
     with session_scope() as session:
         items = session.scalars(
             select(EuItem).where(
                 EuItem.embed_text.isnot(None),
-                EuItem.status.in_(TRIAGE_STATUSES),
+                EuItem.status.in_(ACTIVE_STATUSES),
             )
         ).all()
         n = len(items)

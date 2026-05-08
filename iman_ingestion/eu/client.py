@@ -328,6 +328,8 @@ _STATUS_LABELS: Dict[str, str] = {
     "31094503": "Closed",
 }
 
+ACTIVE_STATUSES: tuple = ("Forthcoming", "Open")
+
 _FRAMEWORK_PROGRAMME_LABELS: Dict[str, str] = {
     "43108390": "Horizon Europe (HORIZON)",
     "43152860": "Digital Europe Programme (DIGITAL)",
