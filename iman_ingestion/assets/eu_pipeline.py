@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 from dagster import asset
 from sqlalchemy import select
 
-from iman_ingestion.db.models import EuItem
+from iman_ingestion.db.models import CompanyProfileRecord, EuItem
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.eu.client import ACTIVE_STATUSES, DEFAULT_BASE_URL, fetch_eu_datasets
 from iman_ingestion.eu.load_cordis import _load_organizations, _load_participations, _load_projects
@@ -183,6 +183,12 @@ def eu_item_triage(
     counters: Dict[str, int] = {"evaluated": 0, "skipped": 0}
 
     with session_scope() as session:
+        profile_record = session.get(CompanyProfileRecord, 1)
+        profile_embedding = list(profile_record.action_plan_embedding) if (
+            profile_record and profile_record.action_plan_embedding is not None
+        ) else None
+
+    with session_scope() as session:
         items = session.scalars(
             select(EuItem).where(
                 EuItem.embed_text.isnot(None),
@@ -207,6 +213,8 @@ def eu_item_triage(
                     embed_text=item.embed_text,
                     llm_client=llm_client,
                     company_profile=company_profile,
+                    item_embedding=list(item.embedding) if item.embedding is not None else None,
+                    profile_embedding=profile_embedding,
                 )
             except Exception as exc:
                 context.log.warning("[%d/%d] triage failed for %r: %s", i, n, item.reference, exc)

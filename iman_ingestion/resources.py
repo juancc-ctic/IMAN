@@ -66,6 +66,18 @@ class ImanIngestionResource(ConfigurableResource):
             now = datetime.now(tz=timezone.utc)
             cutoff = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
+        try:
+            from iman_ingestion.triage.company_profile import load_company_profile
+            tf = load_company_profile().tender_filters
+            filter_kwargs = dict(
+                allowed_statuses=tf.contract_folder_statuses,
+                allowed_type_code=tf.contract_type_code,
+                allowed_subtype_codes=tf.contract_subtype_codes,
+                cpv_prefix=tf.cpv_it_services_prefix,
+            )
+        except Exception:
+            filter_kwargs = {}
+
         return IngestionConfig(
             atom_source=atom,
             output_dir=raw / "downloads",
@@ -73,4 +85,5 @@ class ImanIngestionResource(ConfigurableResource):
             cutoff_utc=cutoff,
             max_tries=max_tries,
             no_download=False,
+            **filter_kwargs,
         )

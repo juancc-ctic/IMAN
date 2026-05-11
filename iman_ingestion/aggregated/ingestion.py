@@ -8,7 +8,7 @@ import logging
 import re
 import sys
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -56,6 +56,14 @@ class IngestionConfig:
     cutoff_utc: Optional[datetime] = None
     max_tries: int = 0
     no_download: bool = False
+    allowed_statuses: frozenset = field(
+        default_factory=lambda: ALLOWED_CONTRACT_FOLDER_STATUSES
+    )
+    allowed_type_code: str = ALLOWED_TYPE_CODE
+    allowed_subtype_codes: frozenset = field(
+        default_factory=lambda: ALLOWED_SUBTYPE_CODES
+    )
+    cpv_prefix: str = CPV_IT_SERVICES_PREFIX
 
 
 @dataclass
@@ -211,41 +219,53 @@ def _normalize_cbc_code_text(elem: ET.Element) -> str:
     return raw
 
 
-def entry_has_allowed_type_and_subtype(entry_el: ET.Element) -> bool:
-    """True if entry has TypeCode 2 and SubTypeCode in allowed set."""
+def entry_has_allowed_type_and_subtype(
+    entry_el: ET.Element,
+    type_code: str = ALLOWED_TYPE_CODE,
+    subtype_codes: frozenset = ALLOWED_SUBTYPE_CODES,
+) -> bool:
+    """True if entry has the expected TypeCode and a SubTypeCode in the allowed set."""
     has_type = False
     has_subtype = False
     for elem in entry_el.iter():
         local = _xml_local_name(elem.tag or "")
         if local == "SubTypeCode":
             val = _normalize_cbc_code_text(elem)
-            if val in ALLOWED_SUBTYPE_CODES:
+            if val in subtype_codes:
                 has_subtype = True
         elif local == "TypeCode":
             val = _normalize_cbc_code_text(elem)
-            if val == ALLOWED_TYPE_CODE:
+            if val == type_code:
                 has_type = True
     return has_type and has_subtype
 
 
-def entry_has_it_services_cpv(entry_el: ET.Element) -> bool:
-    """True if entry has at least one CPV code in the IT Services range (72xxxxxx)."""
+def entry_has_it_services_cpv(
+    entry_el: ET.Element,
+    cpv_prefix: str = CPV_IT_SERVICES_PREFIX,
+) -> bool:
+    """True if entry has at least one CPV code starting with cpv_prefix."""
+    if not cpv_prefix:
+        return True
     for elem in entry_el.iter():
         if _xml_local_name(elem.tag or "") == "ItemClassificationCode":
             code = (elem.text or "").strip()
-            if code.startswith(CPV_IT_SERVICES_PREFIX):
+            if code.startswith(cpv_prefix):
                 return True
     return False
 
 
-def entry_has_allowed_contract_folder_status(entry_el: ET.Element) -> bool:
-    """True if ContractFolderStatusCode is PRE or PUB."""
+def entry_has_allowed_contract_folder_status(
+    entry_el: ET.Element,
+    allowed: frozenset = ALLOWED_CONTRACT_FOLDER_STATUSES,
+) -> bool:
+    """True if ContractFolderStatusCode is in the allowed set."""
     for elem in entry_el.iter():
         tag = elem.tag or ""
         if "ContractFolderStatusCode" not in tag:
             continue
         status = (elem.text or "").strip()
-        if status in ALLOWED_CONTRACT_FOLDER_STATUSES:
+        if status in allowed:
             return True
     return False
 
@@ -464,11 +484,11 @@ def run_ingestion(
 
         hit_limit = False
         for entry in entries:
-            if not entry_has_allowed_contract_folder_status(entry):
+            if not entry_has_allowed_contract_folder_status(entry, config.allowed_statuses):
                 continue
-            if not entry_has_allowed_type_and_subtype(entry):
+            if not entry_has_allowed_type_and_subtype(entry, config.allowed_type_code, config.allowed_subtype_codes):
                 continue
-            if not entry_has_it_services_cpv(entry):
+            if not entry_has_it_services_cpv(entry, config.cpv_prefix):
                 continue
 
             tender_info = extract_tender_data(entry)

@@ -43,6 +43,55 @@ past_tender_categories:
   - "Simulación y experimentación con computación cuántica"
 
 # ---------------------------------------------------------------------------
+# Filtros de licitación — controla qué licitaciones se descargan del portal.
+# Edita estas listas para ampliar o restringir los tipos de contratos que
+# el sistema procesa. Los cambios surten efecto en la próxima ejecución.
+# ---------------------------------------------------------------------------
+tender_filters:
+
+  # Estados del expediente que se aceptan.
+  #   PRE — preanuncio (antes de publicación oficial)
+  #   PUB — publicada y activa
+  contract_folder_statuses:
+    - "PRE"
+    - "PUB"
+
+  # Código de tipo de contrato. 2 = Contratos de servicios.
+  # Normalmente no es necesario cambiarlo.
+  contract_type_code: "2"
+
+  # Subtipos de servicio aceptados. Elimina un código para excluir ese subtipo
+  # o añade nuevos si quieres ampliar la búsqueda.
+  #   5  — Tecnologías de la información y comunicaciones (TIC)
+  #   7  — Investigación y desarrollo
+  #   8  — Consultoría de gestión y afines
+  #   9  — Informática y servicios conexos
+  #   11 — Servicios de elaboración de datos
+  #   12 — Consultoría de proyectos
+  #   20 — Enseñanza y formación profesional
+  #   23 — Servicios sociales y de salud
+  #   24 — Servicios sociales
+  #   25 — Servicios sanitarios y veterinarios
+  #   27 — Otros servicios
+  contract_subtype_codes:
+    - "5"
+    - "7"
+    - "8"
+    - "9"
+    - "11"
+    - "12"
+    - "20"
+    - "23"
+    - "24"
+    - "25"
+    - "27"
+
+  # Prefijo de código CPV para filtrar por categoría de servicio.
+  # 72 = CPV 72000000–72999999 (Servicios de tecnologías de la información).
+  # Deja vacío ("") para desactivar el filtro CPV y aceptar cualquier categoría.
+  cpv_it_services_prefix: "72"
+
+# ---------------------------------------------------------------------------
 # Dimensiones de triaje — el LLM puntúa cada dimensión de 0 a 5.
 # Añade, elimina o edita dimensiones según la estrategia comercial.
 # Los cambios surten efecto en la próxima ejecución (sin reiniciar Dagster).
@@ -78,3 +127,102 @@ triage_dimensions:
       Si los criterios de adjudicación favorecen la calidad técnica sobre el
       precio. Penaliza cuando el peso del precio supera el 50 % de la
       puntuación total, lo que reduce el margen de diferenciación técnica.
+
+# ---------------------------------------------------------------------------
+# Plan de Acción CTIC 2025 — texto completo usado para calcular similitud
+# coseno con licitaciones y convocatorias europeas. Edita libremente.
+# ---------------------------------------------------------------------------
+action_plan_text: |
+  ### Relevant Themes:
+  1. **Intelligence Artificial (IA)**:
+     - IA predictiva y de simulación
+     - IA generativa y modelos fundacionales
+     - IA adaptativa, cognitiva
+     - IA agéntica
+     - Tecnologías del Lenguaje Natural (PLN)
+     - IA para detección de amenazas y anomalías
+     - Explicabilidad y transparencia algorítmica
+     - Protección frente a ataques adversarios en modelos de IA
+     - Quantum Machine Learning
+
+  2. **Internet of Things (IoT)**:
+     - Internet de las Cosas (IoT) y sistemas embebidos
+     - Edge Computing con IA
+     - Datos satelitales
+     - Sensorización avanzada
+     - Seguridad en dispositivos IoT (firmware seguro, autenticación robusta)
+     - Protección de datos en entornos Edge
+     - Criptografía post-cuántica
+
+  3. **Comunicación de Datos**:
+     - Redes LoRaWAN
+     - Conectividad 5G/6G y M2M
+     - Comunicaciones satelitales (constelaciones satélites órbita baja)
+     - Protocolos seguros de comunicación
+     - Gestión de identidades y autenticación de redes
+     - Redes privadas de comunicaciones en entornos industriales y corporativos
+     - Comunicaciones cuánticas
+
+  4. **Arquitecturas Avanzadas**:
+     - Cloud Computing
+     - Arquitecturas distribuidas y descentralizadas (blockchain, DLT, …)
+     - Ecosistemas de datos federados y espacios de datos
+     - Arquitecturas de computación cuántica y tecnologías emergentes
+     - Seguridad en entornos Cloud
+
+  5. **Analítica y Visualización**:
+     - Ciencia de datos y analítica avanzada
+     - Tecnologías para la interoperabilidad y estandarización de datos
+     - Computación espacial inteligente y gemelos digitales de territorio
+     - Sistemas de información geográfica (GIS) y entornos 3D interactivos
+     - Realidad extendida (AR/VR/MR) y plataformas inmersivas
+     - Protección de datos sensibles en análisis masivo
+     - Seguridad en plataformas de visualización inmersivas
+
+  6. **Factor Humano**:
+     - IA confiable: explicabilidad y transparencia algorítmica
+     - Ética, privacidad y seguridad
+     - Interacción humano-máquina (HMI) y humano-robot (HRI) centrada en la persona
+     - Reducción de la brecha digital
+     - Toma de conciencia en ciberseguridad para usuarios y desarrolladores
+     - Diseño ético y seguro de interfaces
+     - Políticas de protección de datos y gestión de riesgos
+
+  7. **Competencias Técnicas Transversales**:
+     - Gestión de proyectos tecnológicos (Scrum, Kanban, PMP)
+     - DevOps y MLOps: integración y despliegue continuo
+     - Arquitecturas orientadas a datos (Data Lakes, Data Mesh, plataformas seguras de integración)
+     - Cumplimiento normativo y estándares internacionales
+     - Computación de alto rendimiento (HPC) para simulaciones complejas
+     - Automatización y robótica en entornos industriales
+
+  ### Keywords:
+  Inteligencia Artificial, Internet de las Cosas, Cloud Computing, Blockchain,
+  Computación Cuántica, Ciencia de Datos, Realidad Aumentada, Realidad Virtual,
+  Realidad Mixta, Gemelos Digitales, Computación Espacial Inteligente, Sistemas
+  de Información Geográfica, Interoperabilidad de Datos, Seguridad en Dispositivos
+  IoT, Criptografía Post-cuántica, Comunicaciones Satelitales, Redes LoRaWAN,
+  Conectividad 5G/6G, Gestión de Identidades, Autenticación de Redes, Comunicaciones
+  Cuánticas, Explicabilidad Algorítmica, Transparencia Algorítmica, Protección de
+  Datos Sensibles, Diseño Ético de Interfaces, Políticas de Protección de Datos,
+  Gestión de Riesgos, Scrum, Kanban, PMP, DevOps, MLOps, Data Lakes, Data Mesh,
+  Cumplimiento Normativo, Computación de Alto Rendimiento, Automatización, Robótica Industrial
+
+  ### Types of Projects:
+  1. Research and Development (R&D): new technologies and methodologies in AI, IoT,
+     Cloud, Blockchain, Quantum Computing, Data Science, AR/VR/MR, Digital Twins,
+     GIS, IoT Security, Post-Quantum Cryptography, Satellite Communications,
+     LoRaWAN, 5G/6G, Identity Management, Quantum Communications, DevOps, MLOps,
+     Data Lakes, Data Mesh, HPC, Automation, Industrial Robotics.
+  2. Innovation: applying existing technologies to healthcare, agriculture, energy,
+     smart cities.
+  3. Collaborative Projects: partnerships with universities, research centres,
+     private companies.
+  4. Pilot Projects: small-scale validation before full deployment.
+  5. Consulting and Advisory: expert guidance on technology adoption.
+  6. Training and Education: programs, workshops, and materials for tech professionals.
+  7. Standardization and Certification: standards and certifications for quality and
+     interoperability.
+  8. Community and Social Impact: technology for social and environmental challenges.
+  9. Infrastructure and Equipment: supporting infrastructure for R&D activities.
+  10. Policy and Regulatory: influencing frameworks for technology adoption.

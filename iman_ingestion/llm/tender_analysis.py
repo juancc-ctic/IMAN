@@ -23,7 +23,7 @@ _TENDER_JSON_SCHEMA_AND_RULES = """
 Extract and return a JSON object with exactly this structure (all string values in the language of the documents when possible, or Spanish/English as appropriate):
 
 {{
-  "summary": "string: 2–4 sentences describing this tender for semantic search; cover what is being contracted, the main technology/service domain, required professional profiles, and the rough budget; write in the language of the documents (Spanish preferred)",
+  "summary": "string: full paragraph describing what the tender is about, the service and tech areas it covers and what the contracted party is supposed to do; write in the language of the documents (Spanish preferred)",
   "object_of_the_contract": "string: what is being contracted",
   "object_of_the_contract_pages": null | [1, 2],
   "scope_of_the_work": "string: main scope and deliverables",

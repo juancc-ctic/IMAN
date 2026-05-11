@@ -130,6 +130,29 @@ class EuProject(Base):
     )
 
 
+class CompanyProfileRecord(Base):
+    """Singleton row mirroring company_profile.yaml, with action-plan embedding."""
+
+    __tablename__ = "company_profile"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    interest_areas: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    company_fields: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    past_tender_categories: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    triage_dimensions: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    tender_filters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    action_plan_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    action_plan_embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(_embedding_dimensions()),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class EuParticipation(Base):
     """Membership of an organisation in an EU project (role + cost share)."""
 

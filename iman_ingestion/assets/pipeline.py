@@ -15,7 +15,7 @@ from iman_ingestion.aggregated.ingestion import (
     folder_name_from_tender_id,
     run_ingestion,
 )
-from iman_ingestion.db.models import Tender
+from iman_ingestion.db.models import CompanyProfileRecord, Tender
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.llm.client import (
     IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
@@ -276,6 +276,13 @@ def tender_triage(
         n,
         chat_model_name(),
     )
+
+    with session_scope() as session:
+        profile_record = session.get(CompanyProfileRecord, 1)
+        profile_embedding = list(profile_record.action_plan_embedding) if (
+            profile_record and profile_record.action_plan_embedding is not None
+        ) else None
+
     with session_scope() as session:
         for i, row in enumerate(rows, start=1):
             tid = row.get("id")
@@ -294,6 +301,8 @@ def tender_triage(
                     enrichment=t.enrichment,
                     llm_client=llm_client,
                     company_profile=company_profile,
+                    tender_embedding=list(t.summary_embedding) if t.summary_embedding is not None else None,
+                    profile_embedding=profile_embedding,
                 )
             except Exception as exc:
                 context.log.warning("[%d/%d] triage failed for %r: %s", i, n, t.id, exc)
@@ -358,3 +367,38 @@ def tender_embeddings(
             total_chunks += 1
 
     return total_chunks
+
+
+@asset
+def company_profile_sync() -> None:
+    """Upsert company_profile.yaml into the DB and embed the action_plan_text."""
+    from dataclasses import asdict
+
+    from iman_ingestion.triage.company_profile import load_company_profile
+
+    profile = load_company_profile()
+    tf = profile.tender_filters
+
+    embedding: list[float] | None = None
+    if profile.action_plan_text:
+        embeddings_client = get_embeddings_client()
+        embedding = embed_texts(embeddings_client, [profile.action_plan_text])[0]
+
+    with session_scope() as session:
+        row = session.get(CompanyProfileRecord, 1)
+        if row is None:
+            row = CompanyProfileRecord(id=1)
+            session.add(row)
+
+        row.interest_areas = profile.interest_areas
+        row.company_fields = profile.company_fields
+        row.past_tender_categories = profile.past_tender_categories
+        row.triage_dimensions = [asdict(d) for d in profile.triage_dimensions]
+        row.tender_filters = {
+            "contract_folder_statuses": sorted(tf.contract_folder_statuses),
+            "contract_type_code": tf.contract_type_code,
+            "contract_subtype_codes": sorted(tf.contract_subtype_codes),
+            "cpv_it_services_prefix": tf.cpv_it_services_prefix,
+        }
+        row.action_plan_text = profile.action_plan_text
+        row.action_plan_embedding = embedding

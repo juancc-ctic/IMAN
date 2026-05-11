@@ -20,6 +20,7 @@ from iman_ingestion.assets.eu_pipeline import (
     raw_eu_ingestion,
 )
 from iman_ingestion.assets.pipeline import (
+    company_profile_sync,
     tender_embeddings,
     persist_tenders,
     raw_aggregated_ingestion,
@@ -84,6 +85,7 @@ defs = Definitions(
         eu_item_embeddings,
         eu_item_triage,
         load_cordis_data,
+        company_profile_sync,
     ],
     resources={
         "iman_ingestion": _iman_ingestion_resource(),
