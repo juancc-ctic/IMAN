@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List
 
 from dagster import asset
@@ -13,8 +14,57 @@ from sqlalchemy import select
 from iman_ingestion.db.models import EuItem
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.eu.client import ACTIVE_STATUSES, DEFAULT_BASE_URL, fetch_eu_datasets
+from iman_ingestion.eu.load_cordis import _load_organizations, _load_participations, _load_projects
 from iman_ingestion.llm.client import chat_model_name, embed_texts, get_embeddings_client, get_llm_client
 from iman_ingestion.triage import evaluate_eu_item, load_company_profile
+
+_CORDIS_DEFAULT = Path(__file__).resolve().parents[2] / "data-sources" / "Europe"
+
+
+@asset(group_name="eu", compute_kind="postgres")
+def load_cordis_data(context) -> Dict[str, int]:
+    """Load CORDIS organisations, projects, and participations from CSV into PostgreSQL.
+
+    Reads from ``IMAN_CORDIS_DATA_DIR`` (default: ``data-sources/Europe/``).
+    Idempotent: uses upsert so it is safe to re-run.
+    """
+    data_dir = Path(os.environ.get("IMAN_CORDIS_DATA_DIR", str(_CORDIS_DEFAULT)))
+
+    orgs_path = data_dir / "organizations.csv"
+    projects_path = data_dir / "projects.csv"
+    relations_path = data_dir / "relations.csv"
+
+    for p in (orgs_path, projects_path, relations_path):
+        if not p.exists():
+            raise FileNotFoundError(f"CORDIS CSV not found: {p}")
+
+    context.log.info("load_cordis_data: loading organizations from %s", orgs_path)
+    with session_scope() as session:
+        n_orgs = _load_organizations(orgs_path, session)
+    context.log.info("load_cordis_data: %d organizations upserted", n_orgs)
+
+    context.log.info("load_cordis_data: loading projects from %s", projects_path)
+    with session_scope() as session:
+        n_projects = _load_projects(projects_path, session)
+    context.log.info("load_cordis_data: %d projects upserted", n_projects)
+
+    context.log.info("load_cordis_data: loading participations from %s", relations_path)
+    with session_scope() as session:
+        n_parts, n_skipped = _load_participations(relations_path, session)
+    context.log.info(
+        "load_cordis_data: %d participations upserted, %d skipped (missing project or org)",
+        n_parts,
+        n_skipped,
+    )
+
+    result = {
+        "organizations": n_orgs,
+        "projects": n_projects,
+        "participations": n_parts,
+        "participations_skipped": n_skipped,
+    }
+    context.add_output_metadata(result)
+    return result
 
 
 @asset(group_name="eu", compute_kind="python")

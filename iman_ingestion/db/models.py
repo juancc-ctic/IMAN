@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -95,3 +95,54 @@ class EuItem(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class EuOrganization(Base):
+    """A CORDIS-registered organisation (participant or coordinator in EU projects)."""
+
+    __tablename__ = "eu_organizations"
+
+    organisation_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    country: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    lon: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    interest: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    why: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    participations: Mapped[List["EuParticipation"]] = relationship(
+        back_populates="organization"
+    )
+
+
+class EuProject(Base):
+    """A CORDIS EU-funded project."""
+
+    __tablename__ = "eu_projects"
+
+    project_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    acronym: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    program: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    keywords: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    participations: Mapped[List["EuParticipation"]] = relationship(
+        back_populates="project"
+    )
+
+
+class EuParticipation(Base):
+    """Membership of an organisation in an EU project (role + cost share)."""
+
+    __tablename__ = "eu_participations"
+
+    project_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("eu_projects.project_id"), primary_key=True
+    )
+    organisation_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("eu_organizations.organisation_id"), primary_key=True
+    )
+    role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    total_cost: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
+
+    project: Mapped["EuProject"] = relationship(back_populates="participations")
+    organization: Mapped["EuOrganization"] = relationship(back_populates="participations")

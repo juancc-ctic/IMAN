@@ -15,6 +15,7 @@ from dagster import (
 from iman_ingestion.assets.eu_pipeline import (
     eu_item_embeddings,
     eu_item_triage,
+    load_cordis_data,
     persist_eu_items,
     raw_eu_ingestion,
 )
@@ -59,7 +60,14 @@ iman_full_job = define_asset_job(
 
 eu_full_job = define_asset_job(
     "eu_full_pipeline",
-    selection=AssetSelection.groups("eu"),
+    selection=AssetSelection.assets(
+        raw_eu_ingestion, persist_eu_items, eu_item_embeddings, eu_item_triage
+    ),
+)
+
+cordis_load_job = define_asset_job(
+    "cordis_load_pipeline",
+    selection=AssetSelection.assets(load_cordis_data),
 )
 
 _cron = os.environ.get("IMAN_CRON_SCHEDULE", "0 6 * * *")
@@ -75,11 +83,12 @@ defs = Definitions(
         persist_eu_items,
         eu_item_embeddings,
         eu_item_triage,
+        load_cordis_data,
     ],
     resources={
         "iman_ingestion": _iman_ingestion_resource(),
     },
-    jobs=[iman_full_job, eu_full_job],
+    jobs=[iman_full_job, eu_full_job, cordis_load_job],
     schedules=[
         ScheduleDefinition(
             name="daily_ingestion",

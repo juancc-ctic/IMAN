@@ -60,6 +60,7 @@ services:
     volumes:
       - iman_data:/data
       - ./docker/dagster_home:/opt/dagster/dagster_home
+      - ./data-sources:/app/data-sources:ro
     depends_on:
       postgres:
         condition: service_healthy

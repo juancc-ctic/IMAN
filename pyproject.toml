@@ -30,6 +30,7 @@ dev = [
 
 [project.scripts]
 download-aggregated-docs = "iman_ingestion.aggregated.cli:main"
+load-cordis-data = "iman_ingestion.eu.load_cordis:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
