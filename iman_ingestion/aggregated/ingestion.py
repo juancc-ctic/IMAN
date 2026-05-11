@@ -41,7 +41,7 @@ FEED_FETCH_TIMEOUT_SEC = 120
 ALLOWED_CONTRACT_FOLDER_STATUSES = frozenset({"PRE", "PUB"})
 ALLOWED_TYPE_CODE = "2"
 ALLOWED_SUBTYPE_CODES = frozenset(
-    {"5", "8", "9", "11", "12", "20", "23", "24", "25", "27"}
+    {"5", "7", "8", "9", "11", "12", "20", "23", "24", "25", "27"}
 )
 CPV_IT_SERVICES_PREFIX = "72"  # CPV 72000000–72999999: Servicios TI
 
