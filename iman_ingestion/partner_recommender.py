@@ -42,7 +42,7 @@ def recommend_partners(target_embedding, coordinator_search, projects_df, orgs_d
         
         # B. Role
         total_roles = len(group['role'])
-        pct_participant = (1 - group['role'] == 'coordinator').sum() / total_roles
+        pct_participant = (group['role'] != 'coordinator').sum() / total_roles
         pct_coordinator = (group['role'] == 'coordinator').sum() / total_roles
         
         if coordinator_search:
