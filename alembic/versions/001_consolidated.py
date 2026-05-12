@@ -1,8 +1,8 @@
-"""Initial schema with all tables.
+"""Consolidated initial schema.
 
-Revision ID: 001_initial
+Revision ID: 001_consolidated
 Revises:
-Create Date: 2026-05-11
+Create Date: 2026-05-12
 
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "001_initial"
+revision: str = "001_consolidated"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -95,9 +95,19 @@ def upgrade() -> None:
         "eu_projects",
         sa.Column("project_id", sa.Text(), nullable=False),
         sa.Column("acronym", sa.Text(), nullable=True),
+        sa.Column("title", sa.Text(), nullable=True),
         sa.Column("program", sa.String(10), nullable=True),
         sa.Column("keywords", sa.Text(), nullable=True),
+        sa.Column("embedding", Vector(_dim()), nullable=True),
         sa.PrimaryKeyConstraint("project_id"),
+    )
+    op.execute(
+        """
+        CREATE INDEX ix_eu_projects_embedding_hnsw
+        ON eu_projects
+        USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 64)
+        """
     )
 
     op.create_table(
@@ -134,6 +144,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("company_profile")
     op.drop_table("eu_participations")
+    op.execute("DROP INDEX IF EXISTS ix_eu_projects_embedding_hnsw")
     op.drop_table("eu_projects")
     op.drop_table("eu_organizations")
     op.drop_index("ix_eu_items_triage_score", table_name="eu_items")

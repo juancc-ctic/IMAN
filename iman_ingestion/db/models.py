@@ -125,6 +125,10 @@ class EuProject(Base):
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     program: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     keywords: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(_embedding_dimensions()),
+        nullable=True,
+    )
 
     participations: Mapped[List["EuParticipation"]] = relationship(
         back_populates="project"

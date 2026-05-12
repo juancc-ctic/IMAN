@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 from dagster import asset
 from sqlalchemy import select
 
-from iman_ingestion.db.models import CompanyProfileRecord, EuItem
+from iman_ingestion.db.models import CompanyProfileRecord, EuItem, EuProject
 from iman_ingestion.db.session import session_scope
 from iman_ingestion.eu.client import ACTIVE_STATUSES, DEFAULT_BASE_URL, fetch_eu_datasets
 from iman_ingestion.eu.load_cordis import _load_organizations, _load_participations, _load_projects
@@ -167,6 +167,39 @@ def eu_item_embeddings(
                     embedded += 1
 
     context.log.info("eu_item_embeddings: embedded %d items", embedded)
+    context.add_output_metadata({"embedded": embedded})
+    return embedded
+
+
+@asset(group_name="eu", compute_kind="openai")
+def eu_project_embeddings(context, load_cordis_data: Dict[str, int]) -> int:
+    """Embed each EU project's title + keywords and store the vector in ``eu_projects``."""
+    batch_size = int(os.environ.get("IMAN_EMBED_BATCH_SIZE", "16"))
+    embeddings_client = get_embeddings_client()
+
+    with session_scope() as session:
+        projects = session.scalars(select(EuProject)).all()
+
+        embeddable = [
+            p for p in projects
+            if (p.title or p.keywords)
+        ]
+        context.log.info(
+            "eu_project_embeddings: %d of %d projects have title or keywords",
+            len(embeddable),
+            len(projects),
+        )
+
+        embedded = 0
+        for off in range(0, len(embeddable), batch_size):
+            batch = embeddable[off : off + batch_size]
+            texts = [f"{p.title or ''} {p.keywords or ''}".strip() for p in batch]
+            vecs = embed_texts(embeddings_client, texts)
+            for project, vec in zip(batch, vecs):
+                project.embedding = vec
+                embedded += 1
+
+    context.log.info("eu_project_embeddings: embedded %d projects", embedded)
     context.add_output_metadata({"embedded": embedded})
     return embedded
 
