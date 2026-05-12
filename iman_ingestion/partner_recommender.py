@@ -23,7 +23,7 @@ def _parse_interest(raw: str | None) -> float | None:
 
 def _vec_to_pg_literal(embedding: list[float]) -> str:
     """Convert a Python float list to pgvector literal format '[0.1,0.2,...]'."""
-    return "[" + ",".join(repr(v) for v in embedding) + "]"
+    return "[" + ",".join(repr(float(v)) for v in embedding) + "]"
 
 
 def recommend_partners(
