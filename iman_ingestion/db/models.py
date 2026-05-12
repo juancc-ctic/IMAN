@@ -122,6 +122,7 @@ class EuProject(Base):
 
     project_id: Mapped[str] = mapped_column(Text, primary_key=True)
     acronym: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     program: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     keywords: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

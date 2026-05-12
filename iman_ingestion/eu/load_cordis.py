@@ -88,6 +88,7 @@ def _load_projects(path: Path, session) -> int:
                 {
                     "project_id": row["projectID"],
                     "acronym": row.get("projectAcronym") or None,
+                    "title": row.get("title") or None,
                     "program": row.get("program") or None,
                     "keywords": row.get("keywords") or None,
                 }
@@ -96,7 +97,7 @@ def _load_projects(path: Path, session) -> int:
                 stmt = pg_insert(EuProject).values(rows)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["project_id"],
-                    set_={c: stmt.excluded[c] for c in ("acronym", "program", "keywords")},
+                    set_={c: stmt.excluded[c] for c in ("acronym", "title", "program", "keywords")},
                 )
                 session.execute(stmt)
                 count += len(rows)
@@ -105,7 +106,7 @@ def _load_projects(path: Path, session) -> int:
             stmt = pg_insert(EuProject).values(rows)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["project_id"],
-                set_={c: stmt.excluded[c] for c in ("acronym", "program", "keywords")},
+                set_={c: stmt.excluded[c] for c in ("acronym", "title", "program", "keywords")},
             )
             session.execute(stmt)
             count += len(rows)
