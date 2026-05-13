@@ -2,118 +2,206 @@
 
 Repositorio del proyecto **IMAN** para el **GenAI Challenge 2026** de CTIC.
 
-IMAN ingiere licitaciones públicas españolas desde feeds **ATOM** de *Plataformas Agregadas Sin Menores*, descarga la documentación (PDF), persiste metadatos en **PostgreSQL**, enriquece cada licitación con un **LLM** (análisis estructurado orientado a un centro tecnológico) y genera **embeddings** almacenados con **pgvector** para búsqueda semántica. La orquestación del pipeline corre en **Dagster** (assets, job único y programación diaria opcional).
+IMAN ingiere licitaciones públicas españolas desde feeds **ATOM** de *Plataformas Agregadas Sin Menores* y oportunidades de financiación europea desde la **EU Funding & Tenders API** (Horizon Europe / CORDIS). Descarga documentación en PDF, persiste metadatos en **PostgreSQL**, enriquece cada registro con un **LLM** (análisis estructurado orientado a un centro tecnológico), genera **embeddings** con **pgvector** para búsqueda semántica, y expone todo a través de una **REST API** (FastAPI). La orquestación del pipeline corre en **Dagster**.
 
 ---
 
-## Características principales
-
-### Ingesta ATOM y descargas
-
-- **Feed ATOM**: lectura de URLs o ficheros `.atom` locales, con cabeceras y timeouts acordes al portal de contratación pública.
-- **Paginación**: sigue enlaces `rel="next"` entre páginas del feed hasta un **corte temporal** opcional (`IMAN_CUTOFF_DATE` / `--cutoff-date`), comparando `<updated>` del feed en UTC.
-- **Filtrado de entradas**: solo ciertos estados de carpeta de contrato y códigos de tipo/subtipo admitidos (servicios relevantes para el caso de uso).
-- **Descarga de PDFs** por licitación (p. ej. **PCAP** y **PPT**) en carpetas derivadas del identificador de la licitación.
-- **Salida JSON** con la lista de licitaciones extraídas (`licitaciones_extraidas.json` por defecto), lista para persistencia y para el resto del pipeline.
-
-### CLI sin Dagster
-
-- Comando instalado: **`download-aggregated-docs`** (`iman_ingestion.aggregated.cli`).
-- Wrapper en raíz: **`download_aggregated_docs.py`**.
-- Opciones: fuente ATOM, directorio de salida, fichero JSON, `--no-download`, `--try` / límite de intentos, fecha de corte.
-
-### Pipeline Dagster (`iman_ingestion.definitions`)
-
-| Asset | Descripción |
-|--------|-------------|
-| **`raw_aggregated_ingestion`** | Ejecuta la ingesta completa (feed + PDFs + JSON) usando `ImanIngestionResource`. |
-| **`persist_tenders`** | Lee el JSON y hace *upsert* en la tabla **`tenders`** (id, enlace, título, órgano, importes). |
-| **`tender_llm_enrichment`** | Rellena **`tenders.enrichment`** (JSONB) analizando la **PCAP** con el LLM. |
-| **`document_embeddings`** | Extrae texto de **PCAP** y **PPT**, trocea, llama al API de embeddings y guarda vectores en **`document_chunks`**. |
-
-- **Job** `iman_full_pipeline`: selección de todos los assets del grupo `iman`.
-- **Schedule** `daily_ingestion`: cron configurable (`IMAN_CRON_SCHEDULE`, por defecto `0 6 * * *`), **desactivada por defecto** hasta activarla en la UI de Dagster.
-
-### Base de datos y migraciones
-
-- **SQLAlchemy** + **Alembic**; al arrancar el contenedor de *user code*, si existe `IMAN_DATABASE_URL`, se ejecuta `alembic upgrade head`.
-- **Modelos**:
-  - **`Tender`**: metadatos de la licitación + `enrichment` (JSON).
-  - **`DocumentChunk`**: texto por trozo, tipo de fuente (`metadata` / `pdf`), nombre de fichero, índice y **vector** (`pgvector`), FK a `tenders`.
-
-### LLM: análisis de licitaciones
-
-- Cliente **compatible con OpenAI** (`/v1/chat/completions`): `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` (y alias legacy en `env.example`).
-- **Modo multimodal** (por defecto): rasteriza páginas de **PCAP.pdf** a PNG (base64) vía **poppler** (`pdftoppm`), con límites por páginas totales, DPI, imágenes por petición y máximo de imágenes (variables `IMAN_MULTIMODAL_*`).
-- **Respaldo en texto** si no hay imágenes o multimodal desactivado (`IMAN_USE_MULTIMODAL_LLM`), con techo de caracteres (`IMAN_LLM_MAX_PDF_CHARS`).
-- Respuesta exigida en **JSON** con campos como objeto del contrato, alcance, paquetes, solvencia económica, perfiles, criterios de valoración, subcontratación y un bloque **`discard_review`** con criterios de cribado (p. ej. ejecución fuera de Asturias, plazos, mantenimiento, asistencia técnica, certificaciones ISO/ENS/PMI, peso de la oferta económica).
-- **Batches** y fusión de resultados cuando hay muchas imágenes (`tender_fields`).
-
-### Embeddings y RAG
-
-- Cliente de **embeddings** compatible con OpenAI (`/v1/embeddings`): `EMBEDDINGS_API_BASE`, `EMBEDDINGS_MODEL`.
-- Troceado de metadatos y PDFs con solapamiento configurable en código (`chunk_text`).
-- Dimensión del vector alineada con el modelo (`IMAN_EMBEDDING_DIMENSION`, p. ej. 1024 para Arctic Embed L v2.0).
-- **Saltos opcionales**: `IMAN_SKIP_LLM_ENRICHMENT`, `IMAN_SKIP_EMBEDDINGS` para pruebas rápidas.
-
-### Infraestructura Docker
-
-- **`postgres`**: imagen **pgvector** (PostgreSQL 16), init scripts en `docker/postgres/init` (bases y extensión vector).
-- **`user_code`**: imagen de la app, **gRPC** Dagster en el puerto **4000**, `DAGSTER_HOME`, volumen de datos `/data`.
-- **`dagster_webserver`**: UI en el puerto **3000**.
-- **`dagster_daemon`**: ejecución de schedules/sensors.
-
-Variables relevantes: `IMAN_DATABASE_URL`, `IMAN_DATA_DIR`, `IMAN_ATOM_SOURCE`, APIs de LLM/embeddings y toggles anteriores (ver **`env.example`**).
-
-### Fuentes de datos UE (utilidad aparte)
-
-En **`data-sources/Europe/`**:
-
-- **`fetch_eu_search.py`**: consultas paginadas a la **EU Funding & Tenders Search API** (topics / calls), alineado con la colección Postman incluida.
-- No forma parte del pipeline Dagster principal; es un script autónomo para otros flujos de datos.
-
-### Referencia y pruebas
-
-- **`ai-controller-example.js`**: ejemplo de referencia (patrones de integración con IA / PDF); no es el runtime del pipeline Python.
-- **Tests** (`pytest`): campos del esquema LLM, integración opcional con API real (`IMAN_RUN_LLM_INTEGRATION=1`, marcador `llm_integration`).
-
----
-
-## Requisitos
+## Requisitos previos
 
 - **Python ≥ 3.11**
-- **Docker** y **Docker Compose** para el entorno recomendado
-- Acceso a APIs **OpenAI-compatibles** para chat y embeddings (o equivalentes en tu red)
+- **Docker** y **Docker Compose**
+- **poppler-utils** en el host o en la imagen (para `pdftoppm` en modo multimodal)
+- Acceso a APIs **OpenAI-compatibles** para chat y embeddings
 
-## Puesta en marcha (Docker)
+---
 
-1. Copia **`env.example`** a **`.env`** y configura al menos `IMAN_ATOM_SOURCE` y las URLs/claves de LLM y embeddings si las usas.
-2. Desde la raíz del repo:
+## Puesta en marcha (Docker — recomendado)
 
-   ```bash
-   docker compose up --build
-   ```
+### 1. Configurar el entorno
 
-3. Abre la UI de Dagster en **http://localhost:3000** y materializa el job **`iman_full_pipeline`** o activa el schedule según necesites.
+```bash
+cp env.example .env
+```
+
+Edita `.env` y ajusta como mínimo:
+
+| Variable | Descripción |
+|---|---|
+| `IMAN_ATOM_SOURCE` | URL del feed ATOM de contratación pública |
+| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Endpoint OpenAI-compatible para chat/análisis |
+| `EMBEDDINGS_API_BASE` / `EMBEDDINGS_MODEL` | Endpoint OpenAI-compatible para embeddings |
+| `IMAN_EMBEDDING_DIMENSION` | Dimensión del vector (por defecto `1024` para Arctic Embed L v2.0) |
+
+### 2. Arrancar todos los servicios
+
+```bash
+docker compose up --build
+```
+
+| Servicio | Puerto | Descripción |
+|---|---|---|
+| `postgres` | 5432 | PostgreSQL 16 + pgvector (bases `dagster` e `iman`) |
+| `user_code` | 4000 (interno) | Código Dagster (gRPC) |
+| `dagster_webserver` | **3000** | UI de Dagster |
+| `dagster_daemon` | — | Ejecución de schedules/sensors |
+| `api` | **8000** | REST API (FastAPI) |
+
+Las migraciones de Alembic se ejecutan automáticamente al arrancar `user_code`.
+
+### 3. Ejecutar el pipeline
+
+- Abre **http://localhost:3000** y materializa el job que necesites, o activa el schedule diario.
+- También puedes lanzarlo vía API REST (ver sección API más abajo).
+
+---
 
 ## Instalación local (desarrollo)
 
 ```bash
 pip install -e ".[dev]"
+
+# Migraciones (requiere IMAN_DATABASE_URL apuntando a tu Postgres)
+alembic upgrade head
+
+# Tests unitarios (sin servicios externos)
+pytest tests/
+
+# Tests con LLM real
+IMAN_RUN_LLM_INTEGRATION=1 pytest tests/test_tender_llm_integration.py -v
 ```
 
-Migraciones (con `IMAN_DATABASE_URL` apuntando a tu Postgres):
+---
+
+## CLI sin Dagster
 
 ```bash
-alembic upgrade head
+download-aggregated-docs \
+  https://<atom-feed-url> \
+  --output downloads \
+  --json-out licitaciones_extraidas.json \
+  --cutoff-date 2026-03-01 \
+  --try 5
+
+# Carga de datos CORDIS
+load-cordis-data
+
+# Recomendador de partners (standalone)
+recommend-partners
 ```
 
-## Estructura del paquete principal
+---
 
-- **`iman_ingestion/`** — definiciones Dagster, assets, ingesta agregada, cliente LLM/embeddings, modelos y sesión DB, extracción PDF.
-- **`alembic/`** — migraciones.
-- **`docker/`** — entrada del contenedor, `dagster_home`, init de Postgres.
-- **`tests/`** — pruebas unitarias / integración.
+## Pipelines Dagster
+
+### `iman_full_pipeline` — Licitaciones españolas
+
+| Asset | Descripción |
+|---|---|
+| `raw_aggregated_ingestion` | Parsea el feed ATOM, filtra por tipo/estado, descarga PCAP.pdf y PPT.pdf en `downloads/<hash>/` |
+| `persist_tenders` | Upsert de metadatos en la tabla `tenders` |
+| `tender_llm_enrichment` | Analiza PCAP con el LLM (multimodal o texto) y guarda JSONB en `tenders.enrichment` |
+| `document_embeddings` | Trocea PCAP + PPT, genera embeddings y guarda filas en `document_chunks` |
+
+### `eu_full_pipeline` — Financiación europea
+
+Ingesta y enriquecimiento de topics y calls de la EU Funding & Tenders API.
+
+### `cordis_load_pipeline` — Proyectos y organizaciones CORDIS
+
+Carga proyectos EU, organizaciones y participaciones desde datos CORDIS.
+
+**Schedule por defecto:** `0 6 * * *` UTC, desactivada hasta habilitarla en la UI (`IMAN_CRON_SCHEDULE`).
+
+---
+
+## REST API
+
+La API arranca en **http://localhost:8000**. Documentación interactiva en `/docs` (Swagger) y `/redoc`.
+
+### Endpoints
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/health` | Liveness check |
+| `POST` | `/jobs/{job_name}/run` | Lanza un job de Dagster (`iman_full_pipeline`, `eu_full_pipeline`, `cordis_load_pipeline`) |
+| `GET` | `/jobs/runs/{run_id}` | Estado de una ejecución |
+| `GET` | `/tenders` | Lista licitaciones (filtros: `min_score`; orden: `sort_by`, `order`) |
+| `GET` | `/tenders/{id}` | Detalle de una licitación |
+| `PATCH` | `/tenders/{id}` | Actualiza `enrichment`, `summary`, `triage`, `triage_score` |
+| `GET` | `/eu-items` | Lista items EU (filtros: `status`, `kind`, `min_score`; orden: `sort_by`, `order`) |
+| `GET` | `/eu-items/{reference}` | Detalle de un item EU |
+| `PATCH` | `/eu-items/{reference}` | Actualiza `triage`, `triage_score`, `embed_text`, `item_metadata` |
+| `POST` | `/eu-items/{reference}/partner-recommendations` | Recomendaciones de partners por similitud semántica |
+| `GET` | `/eu-organizations` | Lista organizaciones (filtro: `country`) |
+| `GET` | `/eu-organizations/{id}` | Detalle de una organización |
+| `PATCH` | `/eu-organizations/{id}` | Actualiza `interest`, `why` |
+| `GET` | `/eu-projects` | Lista proyectos CORDIS |
+| `GET` | `/eu-projects/{id}` | Detalle de un proyecto |
+| `GET` | `/company-profile` | Perfil de empresa (singleton) |
+| `PUT` | `/company-profile` | Crea o actualiza el perfil de empresa |
+
+### Parámetros de ordenación (`/tenders` y `/eu-items`)
+
+Ambos endpoints aceptan `sort_by` y `order=asc|desc` (por defecto `triage_score desc`).
+
+Campos válidos para **`/tenders`**: `triage_score`, `created_at`, `updated_at`, `title`, `party_name`, `submission_deadline`
+
+Campos válidos para **`/eu-items`**: `triage_score`, `created_at`, `updated_at`, `title`, `deadline_date`, `start_date`
+
+```bash
+# Licitaciones ordenadas por título
+curl "http://localhost:8000/tenders?sort_by=title&order=asc&limit=20"
+
+# Items EU con mayor puntuación, estado abierto
+curl "http://localhost:8000/eu-items?status=open&min_score=0.7"
+
+# Lanzar pipeline
+curl -X POST http://localhost:8000/jobs/iman_full_pipeline/run
+```
+
+---
+
+## Variables de entorno relevantes
+
+| Variable | Descripción |
+|---|---|
+| `IMAN_ATOM_SOURCE` | **Requerida.** URL del feed ATOM agregado |
+| `IMAN_DATABASE_URL` | Cadena de conexión PostgreSQL |
+| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | Endpoint de chat (OpenAI-compatible) |
+| `EMBEDDINGS_API_BASE` / `EMBEDDINGS_MODEL` | Endpoint de embeddings |
+| `IMAN_EMBEDDING_DIMENSION` | Dimensión del vector (por defecto `1024`) |
+| `IMAN_USE_MULTIMODAL_LLM` | Modo PDF→PNG multimodal (por defecto `true`) |
+| `IMAN_SKIP_LLM_ENRICHMENT` | Omite el asset de enriquecimiento LLM |
+| `IMAN_SKIP_EMBEDDINGS` | Omite el asset de embeddings |
+| `IMAN_SKIP_TRIAGE` | Omite el triage automático |
+| `IMAN_CUTOFF_DATE` | Detiene la paginación del feed antes de esta fecha (YYYY-MM-DD) |
+| `IMAN_MAX_TRIES` | Máximo de intentos de descarga de PDF por ejecución |
+| `DAGSTER_WEBSERVER_URL` | URL del webserver Dagster para la API REST (por defecto `http://dagster_webserver:3000`) |
+
+Consulta `env.example` para la lista completa con valores de ejemplo y variables opcionales de multimodal, EU Search API y triage.
+
+---
+
+## Arquitectura del paquete
+
+```
+iman_ingestion/
+├── aggregated/       # Ingesta feed ATOM y descarga de PDFs
+├── api/              # REST API (FastAPI)
+│   ├── app.py
+│   ├── tenders.py, eu_items.py, eu_orgs.py, eu_projects.py, jobs.py, profile.py
+│   └── schemas.py
+├── assets/           # Assets Dagster (pipeline.py, eu_pipeline.py)
+├── db/               # Modelos SQLAlchemy y session_scope
+├── eu/               # Cliente EU Funding API y carga CORDIS
+├── llm/              # Cliente LLM, prompt, validación de campos, PDF→imágenes
+├── triage/           # Lógica de puntuación y cribado automático
+├── partner_recommender.py
+└── definitions.py    # Punto de entrada Dagster
+alembic/              # Migraciones de base de datos
+docker/               # Entrypoints, dagster_home, init de Postgres
+tests/                # Pruebas unitarias e integración
+```
 
 ---
 
