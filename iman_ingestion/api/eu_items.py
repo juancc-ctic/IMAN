@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, asc, desc
 
 from iman_ingestion.api.schemas import EuItemOut, EuItemPatch, PartnerRecommendRequest
 from iman_ingestion.db.models import EuItem
@@ -13,6 +14,20 @@ from iman_ingestion.db.session import session_scope
 from iman_ingestion.partner_recommender import recommend_partners
 
 router = APIRouter(prefix="/eu-items", tags=["eu-items"])
+
+
+class EuItemSortField(str, Enum):
+    triage_score = "triage_score"
+    created_at = "created_at"
+    updated_at = "updated_at"
+    title = "title"
+    deadline_date = "deadline_date"
+    start_date = "start_date"
+
+
+class SortOrder(str, Enum):
+    asc = "asc"
+    desc = "desc"
 
 
 def _item_to_out(item: EuItem) -> EuItemOut:
@@ -46,6 +61,8 @@ def list_eu_items(
     status: Optional[str] = None,
     kind: Optional[str] = None,
     min_score: Optional[float] = None,
+    sort_by: EuItemSortField = EuItemSortField.triage_score,
+    order: SortOrder = SortOrder.desc,
 ) -> list[EuItemOut]:
     with session_scope() as session:
         stmt = select(EuItem)
@@ -55,7 +72,9 @@ def list_eu_items(
             stmt = stmt.where(EuItem.kind == kind)
         if min_score is not None:
             stmt = stmt.where(EuItem.triage_score >= min_score)
-        stmt = stmt.order_by(EuItem.triage_score.desc().nulls_last()).offset(skip).limit(limit)
+        col = getattr(EuItem, sort_by.value)
+        direction = desc(col).nulls_last() if order == SortOrder.desc else asc(col).nulls_last()
+        stmt = stmt.order_by(direction).offset(skip).limit(limit)
         rows = session.scalars(stmt).all()
         return [_item_to_out(r) for r in rows]
 

@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, asc, desc
 
 from iman_ingestion.api.schemas import TenderOut, TenderPatch
 from iman_ingestion.db.models import Tender
 from iman_ingestion.db.session import session_scope
 
 router = APIRouter(prefix="/tenders", tags=["tenders"])
+
+
+class TenderSortField(str, Enum):
+    triage_score = "triage_score"
+    created_at = "created_at"
+    updated_at = "updated_at"
+    title = "title"
+    party_name = "party_name"
+    submission_deadline = "submission_deadline"
+
+
+class SortOrder(str, Enum):
+    asc = "asc"
+    desc = "desc"
 
 
 def _tender_to_out(t: Tender) -> TenderOut:
@@ -40,12 +55,16 @@ def list_tenders(
     skip: int = 0,
     limit: int = 50,
     min_score: Optional[float] = None,
+    sort_by: TenderSortField = TenderSortField.triage_score,
+    order: SortOrder = SortOrder.desc,
 ) -> list[TenderOut]:
     with session_scope() as session:
         stmt = select(Tender)
         if min_score is not None:
             stmt = stmt.where(Tender.triage_score >= min_score)
-        stmt = stmt.order_by(Tender.triage_score.desc().nulls_last()).offset(skip).limit(limit)
+        col = getattr(Tender, sort_by.value)
+        direction = desc(col).nulls_last() if order == SortOrder.desc else asc(col).nulls_last()
+        stmt = stmt.order_by(direction).offset(skip).limit(limit)
         rows = session.scalars(stmt).all()
         return [_tender_to_out(t) for t in rows]
 
