@@ -110,6 +110,26 @@ services:
       user_code:
         condition: service_started
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn iman_ingestion.api.app:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      IMAN_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/iman
+      DAGSTER_WEBSERVER_URL: http://dagster_webserver:3000
+      IMAN_EMBEDDING_DIMENSION: ${IMAN_EMBEDDING_DIMENSION:-1024}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dagster_webserver:
+        condition: service_started
+
 volumes:
   postgres_data:
   iman_data:
