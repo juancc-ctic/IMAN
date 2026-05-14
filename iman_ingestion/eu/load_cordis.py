@@ -40,12 +40,14 @@ def _parse_geolocation(raw: str) -> tuple[Optional[float], Optional[float]]:
         return None, None
 
 
-def _load_organizations(path: Path, session) -> int:
+def _load_organizations(path: Path, session, limit: int = 0) -> int:
     count = 0
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = []
         for row in reader:
+            if limit and count + len(rows) >= limit:
+                break
             lat, lon = _parse_geolocation(row.get("geolocation", ""))
             rows.append(
                 {
@@ -78,12 +80,14 @@ def _load_organizations(path: Path, session) -> int:
     return count
 
 
-def _load_projects(path: Path, session) -> int:
+def _load_projects(path: Path, session, limit: int = 0) -> int:
     count = 0
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = []
         for row in reader:
+            if limit and count + len(rows) >= limit:
+                break
             rows.append(
                 {
                     "project_id": row["projectID"],
@@ -113,7 +117,7 @@ def _load_projects(path: Path, session) -> int:
     return count
 
 
-def _load_participations(path: Path, session) -> tuple[int, int]:
+def _load_participations(path: Path, session, limit: int = 0) -> tuple[int, int]:
     from sqlalchemy import text as sa_text
 
     valid_projects = {
@@ -129,6 +133,8 @@ def _load_participations(path: Path, session) -> tuple[int, int]:
         reader = csv.DictReader(f)
         rows = []
         for row in reader:
+            if limit and count + len(rows) >= limit:
+                break
             pid = row["projectID"]
             oid = row["organisationID"]
             if pid not in valid_projects or oid not in valid_orgs:
@@ -172,6 +178,13 @@ def main() -> None:
         default=_DEFAULT_DATA_DIR,
         help="Directory containing organizations.csv, projects.csv, relations.csv",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Max rows to upsert per table (0 = no limit)",
+    )
     args = parser.parse_args()
 
     data_dir: Path = args.data_dir
@@ -184,19 +197,22 @@ def main() -> None:
             print(f"ERROR: {p} not found", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Loading organizations from {orgs_path} …")
+    limit = args.limit
+    limit_note = f" (limit {limit:,})" if limit else ""
+
+    print(f"Loading organizations from {orgs_path}{limit_note} …")
     with session_scope() as session:
-        n = _load_organizations(orgs_path, session)
+        n = _load_organizations(orgs_path, session, limit)
     print(f"  {n:,} organizations upserted")
 
-    print(f"Loading projects from {projects_path} …")
+    print(f"Loading projects from {projects_path}{limit_note} …")
     with session_scope() as session:
-        n = _load_projects(projects_path, session)
+        n = _load_projects(projects_path, session, limit)
     print(f"  {n:,} projects upserted")
 
-    print(f"Loading participations from {relations_path} …")
+    print(f"Loading participations from {relations_path}{limit_note} …")
     with session_scope() as session:
-        n, skipped = _load_participations(relations_path, session)
+        n, skipped = _load_participations(relations_path, session, limit)
     print(f"  {n:,} participations upserted ({skipped:,} skipped — missing project or org)")
 
     print("Done.")

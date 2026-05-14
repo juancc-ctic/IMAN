@@ -48,6 +48,36 @@ docker compose up --build
 
 Las migraciones de Alembic se ejecutan automáticamente al arrancar `user_code`.
 
+### Datos de ejemplo (opcional)
+
+El directorio `seeds/` contiene una muestra inicial de la base de datos. Al arrancar con `IMAN_APPLY_SEED=1` se cargan:
+
+- `company_profile` — perfil de empresa (1 fila)
+- `tenders` — todas las licitaciones ordenadas por `triage_score` desc
+- `eu_items` — los 20 items EU con mayor puntuación
+- `eu_organizations`, `eu_projects`, `eu_participations` — 100 filas por tabla desde los CSV de `data-sources/Europe/`
+
+Para cargarlos al arrancar:
+
+```bash
+IMAN_APPLY_SEED=1 docker compose up --build
+```
+
+Deja `IMAN_APPLY_SEED` vacía (o sin definir) en producción — el arranque la omite sin error.
+
+Para cargar las tablas CORDIS completas (sin límite) en cualquier momento:
+
+```bash
+docker compose exec user_code load-cordis-data           # completo (~276k participaciones)
+docker compose exec user_code load-cordis-data --limit 500  # muestra personalizada
+```
+
+Para regenerar el seed desde una base de datos actualizada:
+
+```bash
+python seeds/generate_seed.py
+```
+
 ### 3. Ejecutar el pipeline
 
 - Abre **http://localhost:3000** y materializa el job que necesites, o activa el schedule diario.
@@ -174,6 +204,7 @@ curl -X POST http://localhost:8000/jobs/iman_full_pipeline/run
 | `IMAN_SKIP_LLM_ENRICHMENT` | Omite el asset de enriquecimiento LLM |
 | `IMAN_SKIP_EMBEDDINGS` | Omite el asset de embeddings |
 | `IMAN_SKIP_TRIAGE` | Omite el triage automático |
+| `IMAN_APPLY_SEED` | Carga `seeds/seed.sql` al arrancar (desarrollo; vacía en producción) |
 | `IMAN_CUTOFF_DATE` | Detiene la paginación del feed antes de esta fecha (YYYY-MM-DD) |
 | `IMAN_MAX_TRIES` | Máximo de intentos de descarga de PDF por ejecución |
 | `DAGSTER_WEBSERVER_URL` | URL del webserver Dagster para la API REST (por defecto `http://dagster_webserver:3000`) |
