@@ -16,6 +16,7 @@ conn.close()
 print("Seed applied.")
 EOF
     load-cordis-data
+    embed-eu-projects --skip-existing &
   fi
 fi
 exec dagster api grpc -h 0.0.0.0 -p 4000 -m iman_ingestion.definitions

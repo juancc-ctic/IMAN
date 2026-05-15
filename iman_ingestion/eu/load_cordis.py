@@ -10,10 +10,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from iman_ingestion.db.models import EuOrganization, EuParticipation, EuProject
 from iman_ingestion.db.session import session_scope
+from iman_ingestion.llm.client import embed_texts, get_embeddings_client
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data-sources" / "Europe"
 
@@ -166,6 +168,50 @@ def _load_participations(path: Path, session, limit: int = 0) -> tuple[int, int]
             session.execute(stmt)
             count += len(rows)
     return count, skipped
+
+
+def embed_eu_projects_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate and store embeddings for all eu_projects rows."
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=int(os.environ.get("IMAN_EMBED_BATCH_SIZE", "16")),
+        metavar="N",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=False,
+        help="Skip projects that already have an embedding.",
+    )
+    args = parser.parse_args()
+
+    client = get_embeddings_client()
+
+    with session_scope() as session:
+        projects = session.scalars(select(EuProject)).all()
+        if args.skip_existing:
+            projects = [p for p in projects if p.embedding is None]
+        embeddable = [p for p in projects if p.title or p.keywords]
+
+    print(f"Embedding {len(embeddable):,} projects …")
+    embedded = 0
+    for off in range(0, len(embeddable), args.batch_size):
+        batch = embeddable[off : off + args.batch_size]
+        texts = [f"{p.title or ''} {p.keywords or ''}".strip() for p in batch]
+        vecs = embed_texts(client, texts)
+        with session_scope() as session:
+            for project, vec in zip(batch, vecs):
+                db_project = session.get(EuProject, project.project_id)
+                if db_project is not None:
+                    db_project.embedding = vec
+                    embedded += 1
+        if embedded % 1000 < args.batch_size:
+            print(f"  {embedded:,} / {len(embeddable):,}")
+
+    print(f"Done. {embedded:,} projects embedded.")
 
 
 def main() -> None:

@@ -34,6 +34,7 @@ dev = [
 [project.scripts]
 download-aggregated-docs = "iman_ingestion.aggregated.cli:main"
 load-cordis-data = "iman_ingestion.eu.load_cordis:main"
+embed-eu-projects = "iman_ingestion.eu.load_cordis:embed_eu_projects_main"
 recommend-partners = "iman_ingestion.partner_recommender:main"
 
 [tool.setuptools.packages.find]
