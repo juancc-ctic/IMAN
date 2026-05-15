@@ -2,7 +2,7 @@
 
 Repositorio del proyecto **IMAN** para el **GenAI Challenge 2026** de CTIC.
 
-IMAN ingiere licitaciones públicas españolas desde feeds **ATOM** de *Plataformas Agregadas Sin Menores* y oportunidades de financiación europea desde la **EU Funding & Tenders API** (Horizon Europe / CORDIS). Descarga documentación en PDF, persiste metadatos en **PostgreSQL**, enriquece cada registro con un **LLM** (análisis estructurado orientado a un centro tecnológico), genera **embeddings** con **pgvector** para búsqueda semántica, y expone todo a través de una **REST API** (FastAPI). La orquestación del pipeline corre en **Dagster**.
+IMAN ingiere licitaciones públicas españolas desde feeds **ATOM** de *Plataformas Agregadas Sin Menores* y oportunidades de financiación europea desde la **EU Funding & Tenders API** (Horizon Europe / CORDIS). Descarga documentación en PDF, persiste metadatos en **PostgreSQL**, enriquece cada registro con un **LLM** (análisis estructurado orientado a cCTIC), genera **embeddings** con **pgvector** para búsqueda semántica, y expone todo a través de una **REST API** (FastAPI). La orquestación del pipeline corre en **Dagster**.
 
 ---
 
@@ -55,7 +55,7 @@ El directorio `seeds/` contiene una muestra inicial de la base de datos. Al arra
 - `company_profile` — perfil de empresa (1 fila)
 - `tenders` — todas las licitaciones ordenadas por `triage_score` desc
 - `eu_items` — los 20 items EU con mayor puntuación
-- `eu_organizations`, `eu_projects`, `eu_participations` — 100 filas por tabla desde los CSV de `data-sources/Europe/`
+- `eu_organizations`, `eu_projects`, `eu_participations` — todas las filas desde los CSV de `data-sources/Europe/` - Este proceso tarda unos minutos
 
 Para cargarlos al arrancar:
 
@@ -65,13 +65,6 @@ IMAN_APPLY_SEED=1 docker compose up --build
 
 Deja `IMAN_APPLY_SEED` vacía (o sin definir) en producción — el arranque la omite sin error.
 
-Para cargar las tablas CORDIS completas (sin límite) en cualquier momento:
-
-```bash
-docker compose exec user_code load-cordis-data           # completo (~276k participaciones)
-docker compose exec user_code load-cordis-data --limit 500  # muestra personalizada
-```
-
 Para regenerar el seed desde una base de datos actualizada:
 
 ```bash
@@ -80,8 +73,10 @@ python seeds/generate_seed.py
 
 ### 3. Ejecutar el pipeline
 
-- Abre **http://localhost:3000** y materializa el job que necesites, o activa el schedule diario.
-- También puedes lanzarlo vía API REST (ver sección API más abajo).
+- Abre **http://localhost:3000** y materializa el job que necesites:
+- iman_full_pipeline: Licitaciones españolas diarias
+- eu_full_pipeline: Topics y Open calls europeas abiertas actualmente
+- También se puede lanzar vía API REST (ver sección API más abajo).
 
 ---
 
@@ -134,7 +129,7 @@ recommend-partners
 
 ### `eu_full_pipeline` — Financiación europea
 
-Ingesta y enriquecimiento de topics y calls de la EU Funding & Tenders API.
+Ingesta y enriquecimiento de topics y calls actuales de la EU Funding & Tenders API.
 
 ### `cordis_load_pipeline` — Proyectos y organizaciones CORDIS
 

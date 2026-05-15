@@ -15,7 +15,7 @@ conn.cursor().execute(sql)
 conn.close()
 print("Seed applied.")
 EOF
-    load-cordis-data --limit 100
+    load-cordis-data
   fi
 fi
 exec dagster api grpc -h 0.0.0.0 -p 4000 -m iman_ingestion.definitions
