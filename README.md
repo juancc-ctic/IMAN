@@ -118,24 +118,101 @@ recommend-partners
 
 ## Pipelines Dagster
 
+**Schedule por defecto:** `0 6 * * *` UTC, desactivada hasta habilitarla en la UI (`IMAN_CRON_SCHEDULE`).
+
 ### `iman_full_pipeline` — Licitaciones españolas
 
-| Asset | Descripción |
-|---|---|
-| `raw_aggregated_ingestion` | Parsea el feed ATOM, filtra por tipo/estado, descarga PCAP.pdf y PPT.pdf en `downloads/<hash>/` |
-| `persist_tenders` | Upsert de metadatos en la tabla `tenders` |
-| `tender_llm_enrichment` | Analiza PCAP con el LLM (multimodal o texto) y guarda JSONB en `tenders.enrichment` |
-| `document_embeddings` | Trocea PCAP + PPT, genera embeddings y guarda filas en `document_chunks` |
+Procesa las licitaciones públicas españolas desde el feed ATOM hasta su puntuación final. Los assets se ejecutan en secuencia:
+
+1. **`raw_aggregated_ingestion`** — Recorre las páginas del feed ATOM siguiendo los enlaces `rel="next"` hasta la fecha de corte (`IMAN_CUTOFF_DATE`). Filtra por estado (`PRE`, `PUB`, `EV`) y tipo de contrato (código 2 con subcódigos específicos). Por cada licitación que pasa el filtro descarga `PCAP.pdf` (pliego de cláusulas administrativas) y `PPT.pdf` (prescripciones técnicas) en `downloads/<hash>/`. El resultado es un fichero JSON con los metadatos de todas las licitaciones descargadas.
+
+2. **`persist_tenders`** — Lee el JSON anterior y hace un upsert de cada licitación en la tabla `tenders` (id, título, organismo, importes, URLs de PDF, plazo de presentación).
+
+3. **`tender_llm_enrichment`** — Para cada licitación, si `IMAN_USE_MULTIMODAL_LLM=true` rasteriza el `PCAP.pdf` a imágenes PNG (vía `pdftoppm`) y las envía al LLM en bloques; si no, extrae el texto del PDF. El LLM devuelve un JSONB estructurado con: alcance del contrato, lotes, requisitos de solvencia, perfiles requeridos, criterios de valoración, posibilidad de subcontratación y flags de descarte. Este resultado se guarda en `tenders.enrichment`.
+
+4. **`tender_embeddings`** — Incrusta el resumen generado por el LLM (`enrichment.summary`) y guarda el vector en `tenders.summary_embedding` para búsqueda semántica posterior.
+
+5. **`tender_triage`** — Evalúa cada licitación enriquecida frente al perfil de empresa (`company_profile.yaml`). Combina similitud semántica entre el embedding de la licitación y el de la empresa con una puntuación LLM multi-dimensión (interés estratégico, adecuación técnica, viabilidad, etc.). El resultado se guarda en `tenders.triage` (JSONB con desglose) y `tenders.triage_score` (0–5).
 
 ### `eu_full_pipeline` — Financiación europea
 
-Ingesta y enriquecimiento de topics y calls actuales de la EU Funding & Tenders API.
+Procesa topics y open calls de la EU Funding & Tenders API:
+
+1. **`raw_eu_ingestion`** — Consulta la EU Search API y recupera todos los topics y calls activos que coincidan con el texto de búsqueda configurado (`EU_SEARCH_TEXT`). Devuelve una lista normalizada de items con su referencia, título, estado, fechas y texto para embedding.
+
+2. **`persist_eu_items`** — Upsert de cada item en la tabla `eu_items` (referencia, tipo, URL, programa marco, fechas de inicio y cierre).
+
+3. **`eu_item_embeddings`** — Genera un embedding por item a partir de su descripción (`embed_text`, truncada a 16 000 caracteres) y lo guarda en `eu_items.embedding`.
+
+4. **`eu_item_triage`** — Para cada item activo con embedding, evalúa su relevancia frente al perfil de empresa combinando similitud vectorial y puntuación LLM. Almacena el resultado en `eu_items.triage` y `eu_items.triage_score`.
 
 ### `cordis_load_pipeline` — Proyectos y organizaciones CORDIS
 
-Carga proyectos EU, organizaciones y participaciones desde datos CORDIS.
+Carga los datos de referencia de proyectos europeos financiados (Horizon Europe y anteriores):
 
-**Schedule por defecto:** `0 6 * * *` UTC, desactivada hasta habilitarla en la UI (`IMAN_CRON_SCHEDULE`).
+1. **`load_cordis_data`** — Lee los CSV de `data-sources/Europe/` (`organizations.csv`, `projects.csv`, `relations.csv`) y hace upsert en las tablas `eu_organizations`, `eu_projects` y `eu_participations`. Idempotente.
+
+2. **`eu_project_embeddings`** — Incrusta el título y palabras clave de cada proyecto y guarda el vector en `eu_projects.embedding`, habilitando recomendaciones de partners por similitud semántica.
+
+---
+
+## Recomendación de partners
+
+El sistema de recomendación de partners sugiere organizaciones europeas con las que colaborar en una convocatoria EU, basándose en su historial de participación en proyectos CORDIS similares.
+
+### Cómo funciona
+
+Dado el embedding de un EU item (topic o call), el algoritmo ejecuta tres pasos:
+
+1. **Búsqueda por similitud vectorial (ANN)** — Recupera los `top_k` proyectos CORDIS más similares a la convocatoria usando el índice HNSW de pgvector (`eu_projects.embedding <=> target`).
+
+2. **Agregación por organización** — Para cada organización que participó en esos proyectos, acumula las puntuaciones de similitud de los proyectos en los que apareció y su rol (coordinador o participante).
+
+3. **Puntuación final** — Combina tres factores:
+   - **Dominio técnico** (`s_exp`): suma de similitudes al cuadrado, premiando organizaciones presentes en varios proyectos afines.
+   - **Afinidad de rol** (`m_role`): multiplicador de hasta ×1.2 si se busca coordinador y la organización tiene historial como tal.
+   - **Confianza interna** (`m_int`): multiplicador basado en la nota de interés de la organización en `eu_organizations.interest` (escala 0–5). Organizaciones sin nota reciben factor neutro (×1.0).
+
+El resultado final es `score = s_exp × m_role × m_int`, y se devuelven los `top_n` más altos con una explicación desglosada en los tres factores.
+
+### Prerrequisitos
+
+- Datos CORDIS cargados (`cordis_load_pipeline` o `load-cordis-data`).
+- Embeddings de proyectos generados (`eu_project_embeddings`).
+- Embedding del EU item generado (`eu_item_embeddings`).
+
+### Uso vía API REST
+
+```bash
+# Recomendaciones para una convocatoria (defaults: top_k=50, top_n=5)
+curl -X POST http://localhost:8000/eu-items/HORIZON-CL4-2026-DATA-01-01/partner-recommendations \
+  -H "Content-Type: application/json" \
+  -d '{"coordinator": true, "top_k": 50, "top_n": 5}'
+```
+
+Respuesta (ejemplo):
+```json
+[
+  {
+    "organisationID": "999507401",
+    "name": "FUNDACION CTIC CENTRO TECNOLOGICO",
+    "score": 1.47,
+    "explicacion": {
+      "1_dominio_tecnico": "3 proyectos afines encontrados (Similitud media: 0.83).",
+      "2_afinidad_rol": "67% de veces como coordinador.",
+      "3_confianza": "Nota interna de confianza: 4.5/5."
+    }
+  }
+]
+```
+
+### Uso vía CLI
+
+```bash
+# Requiere IMAN_DATABASE_URL configurada
+recommend-partners HORIZON-CL4-2026-DATA-01-01
+recommend-partners HORIZON-CL4-2026-DATA-01-01 --coordinator --top-k 100 --top-n 10
+```
 
 ---
 
