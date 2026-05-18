@@ -38,13 +38,19 @@ Edita `.env` y ajusta como mínimo:
 docker compose up --build
 ```
 
-| Servicio | Puerto | Descripción |
+| Servicio | Puerto (host) | Descripción |
 |---|---|---|
-| `postgres` | 5432 | PostgreSQL 16 + pgvector (bases `dagster` e `iman`) |
+| `postgres` | `POSTGRES_PORT` (defecto **5432**) | PostgreSQL 16 + pgvector (bases `dagster` e `iman`) |
 | `user_code` | 4000 (interno) | Código Dagster (gRPC) |
-| `dagster_webserver` | **3000** | UI de Dagster |
+| `dagster_webserver` | `DAGSTER_PORT` (defecto **3000**) | UI de Dagster |
 | `dagster_daemon` | — | Ejecución de schedules/sensors |
-| `api` | **8000** | REST API (FastAPI) |
+| `api` | `API_PORT` (defecto **8000**) | REST API (FastAPI) |
+
+Los puertos del host son configurables mediante variables de entorno (en `.env` o en la línea de comandos):
+
+```bash
+DAGSTER_PORT=3001 API_PORT=8001 docker compose up
+```
 
 Las migraciones de Alembic se ejecutan automáticamente al arrancar `user_code`.
 
@@ -280,6 +286,9 @@ curl -X POST http://localhost:8000/jobs/iman_full_pipeline/run
 | `IMAN_CUTOFF_DATE` | Detiene la paginación del feed antes de esta fecha (YYYY-MM-DD) |
 | `IMAN_MAX_TRIES` | Máximo de intentos de descarga de PDF por ejecución |
 | `DAGSTER_WEBSERVER_URL` | URL del webserver Dagster para la API REST (por defecto `http://dagster_webserver:3000`) |
+| `DAGSTER_PORT` | Puerto del host para el webserver Dagster (por defecto `3000`) |
+| `API_PORT` | Puerto del host para la REST API (por defecto `8000`) |
+| `POSTGRES_PORT` | Puerto del host para PostgreSQL (por defecto `5432`) |
 
 Consulta `env.example` para la lista completa con valores de ejemplo y variables opcionales de multimodal, EU Search API y triage.
 
