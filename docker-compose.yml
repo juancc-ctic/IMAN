@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./docker/dagster_home:/opt/dagster/dagster_home
     ports:
-      - "3000:3000"
+      - "${DAGSTER_PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,7 +130,7 @@ services:
       DAGSTER_WEBSERVER_URL: http://dagster_webserver:3000
       IMAN_EMBEDDING_DIMENSION: ${IMAN_EMBEDDING_DIMENSION:-1024}
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
