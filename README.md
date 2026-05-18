@@ -9,63 +9,28 @@ IMAN ingiere licitaciones públicas españolas desde feeds **ATOM** de *Platafor
 ## Arquitectura
 
 ```mermaid
-flowchart TD
-    subgraph EXT["Fuentes externas"]
-        ATOM["ATOM Feed\ncontrataciondelestado.es"]
-        EUAPI["EU Funding & Tenders API"]
-        CSV["CORDIS CSV\ndata-sources/Europe/"]
-        LLMAPI["LLM API\nOpenAI-compatible"]
-        EMBAPI["Embeddings API\nOpenAI-compatible"]
+flowchart LR
+    ATOM["ATOM Feed"]
+    EUAPI["EU Funding &\nTenders API"]
+    CSV["CORDIS CSV"]
+    LLMAPI["LLM + Embeddings\nAPIs"]
+
+    subgraph DAG["Dagster"]
+        P1["iman_full_pipeline\ningesta · análisis · triage"]
+        P2["eu_full_pipeline\ningesta · embeddings · triage"]
+        P3["cordis_load_pipeline\norgs · proyectos"]
     end
 
-    subgraph DAG["Dagster  —  user_code :4000"]
-        subgraph P1["iman_full_pipeline  (diario 06:00 UTC)"]
-            I1["raw_aggregated_ingestion\nrecorre feed · descarga PDFs"]
-            I2["persist_tenders"]
-            I3["tender_llm_enrichment\nanalisis estructurado JSONB"]
-            I4["tender_embeddings\nsummary → vector"]
-            I5["tender_triage\nscore 0–5"]
-            I1 --> I2 --> I3 --> I4 --> I5
-        end
-        subgraph P2["eu_full_pipeline"]
-            E1["raw_eu_ingestion"]
-            E2["persist_eu_items"]
-            E3["eu_item_embeddings"]
-            E4["eu_item_triage\nscore 0–5"]
-            E1 --> E2 --> E3 --> E4
-        end
-        subgraph P3["cordis_load_pipeline"]
-            C1["load_cordis_data\norgs · proyectos · participaciones"]
-            C2["eu_project_embeddings"]
-            C1 --> C2
-        end
-    end
+    DB[("PostgreSQL\n+ pgvector")]
+    API["REST API\nFastAPI :8000"]
 
-    subgraph DB["PostgreSQL 16 + pgvector"]
-        T[("tenders\nenrichment · summary_embedding\ntriage · triage_score")]
-        EUI[("eu_items\nembedding · triage_score")]
-        CORP[("eu_organizations\neu_projects · eu_participations")]
-        CP[("company_profile")]
-    end
+    ATOM --> P1
+    EUAPI --> P2
+    CSV --> P3
+    LLMAPI --> P1 & P2 & P3
 
-    API["REST API — FastAPI :8000\n/tenders · /eu-items · /eu-organizations\n/eu-projects · /partner-recommendations\n/jobs · /company-profile"]
-    UI["Dagster UI :3000"]
-
-    ATOM --> I1
-    EUAPI --> E1
-    CSV --> C1
-    LLMAPI --> I3 & I5 & E4
-    EMBAPI --> I4 & E3 & C2
-    CP --> I5 & E4
-
-    I2 & I3 & I4 & I5 --> T
-    E2 & E3 & E4 --> EUI
-    C1 --> CORP
-    C2 --> CORP
-
+    P1 & P2 & P3 --> DB
     DB <--> API
-    API -.->|"lanza jobs"| DAG
-    UI -.->|"gRPC"| DAG
 ```
 
 ---
