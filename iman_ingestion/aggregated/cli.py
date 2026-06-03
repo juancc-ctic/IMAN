@@ -25,9 +25,10 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "atom_source",
+        "atom_sources",
         metavar="ATOM",
-        help="Local path to .atom file or http(s) URL of the feed",
+        nargs="+",
+        help="One or more local paths or http(s) URLs of ATOM feeds",
     )
     parser.add_argument(
         "--try",
@@ -79,7 +80,7 @@ def main() -> int:
         cutoff_utc = cutoff_utc.astimezone(timezone.utc)
 
     config = IngestionConfig(
-        atom_source=args.atom_source,
+        atom_sources=args.atom_sources,
         output_dir=args.output,
         json_out=args.json_out,
         cutoff_utc=cutoff_utc,
@@ -90,7 +91,7 @@ def main() -> int:
     try:
         result = run_ingestion(config, verbose=True)
     except FileNotFoundError:
-        print(f"File not found: {args.atom_source}", file=sys.stderr)
+        print(f"File not found: {args.atom_sources}", file=sys.stderr)
         return 1
     except requests.HTTPError as exc:
         print(f"Failed to fetch feed: {exc}", file=sys.stderr)

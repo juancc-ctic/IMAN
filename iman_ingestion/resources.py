@@ -18,7 +18,11 @@ class ImanIngestionResource(ConfigurableResource):
 
     atom_source: str = Field(
         default="",
-        description="ATOM URL or path; falls back to IMAN_ATOM_SOURCE.",
+        description="Single ATOM URL or path; falls back to IMAN_ATOM_SOURCE.",
+    )
+    atom_sources: str = Field(
+        default="",
+        description="Comma-separated ATOM URLs; falls back to IMAN_ATOM_SOURCES.",
     )
     data_dir: str = Field(
         default="/data",
@@ -42,9 +46,21 @@ class ImanIngestionResource(ConfigurableResource):
 
     def to_ingestion_config(self) -> IngestionConfig:
         """Build :class:`IngestionConfig` using env fallbacks."""
-        atom = self.atom_source or os.environ.get("IMAN_ATOM_SOURCE", "")
-        if not atom:
-            raise ValueError("Set atom_source on the resource or IMAN_ATOM_SOURCE")
+        def _split(s: str) -> list:
+            return [u.strip() for u in s.replace("\n", ",").split(",") if u.strip()]
+
+        sources: list = (
+            _split(self.atom_sources)
+            or _split(os.environ.get("IMAN_ATOM_SOURCES", ""))
+        )
+        single = self.atom_source or os.environ.get("IMAN_ATOM_SOURCE", "")
+        if single and single not in sources:
+            sources.append(single)
+        if not sources:
+            raise ValueError(
+                "Set atom_sources (comma-separated) or atom_source on the resource, "
+                "or IMAN_ATOM_SOURCES / IMAN_ATOM_SOURCE env vars"
+            )
 
         data_dir = os.environ.get("IMAN_DATA_DIR", self.data_dir)
         raw = Path(data_dir) / "raw"
@@ -71,15 +87,15 @@ class ImanIngestionResource(ConfigurableResource):
             tf = load_company_profile().tender_filters
             filter_kwargs = dict(
                 allowed_statuses=tf.contract_folder_statuses,
-                allowed_type_code=tf.contract_type_code,
+                allowed_type_codes=tf.contract_type_codes,
                 allowed_subtype_codes=tf.contract_subtype_codes,
-                cpv_prefix=tf.cpv_it_services_prefix,
+                cpv_filters=tf.cpv_filters,
             )
         except Exception:
             filter_kwargs = {}
 
         return IngestionConfig(
-            atom_source=atom,
+            atom_sources=sources,
             output_dir=raw / "downloads",
             json_out=raw / json_name,
             cutoff_utc=cutoff,

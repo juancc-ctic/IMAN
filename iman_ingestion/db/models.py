@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Numeric, String, Text
+from sqlalchemy import ARRAY, DateTime, Float, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -47,6 +47,7 @@ class Tender(Base):
     )
     submission_deadline: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     execution_period: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cpv_codes: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text), nullable=True)
     triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     triage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(

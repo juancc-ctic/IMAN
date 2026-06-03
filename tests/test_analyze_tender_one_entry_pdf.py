@@ -39,6 +39,7 @@ from tests.llm_live_helpers import assert_enrichment_shape, skip_without_live_ll
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 _MINIMAL_LLM_JSON = {
+    "summary": "Contrato de mantenimiento de software con soporte y evoluciones menores.",
     "object_of_the_contract": "Mantenimiento de software",
     "scope_of_the_work": "Soporte y evoluciones menores",
     "packages": [],

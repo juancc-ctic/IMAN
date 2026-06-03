@@ -50,7 +50,7 @@ CPV_IT_SERVICES_PREFIX = "72"  # CPV 72000000–72999999: Servicios TI
 class IngestionConfig:
     """Parameters for a single ingestion run."""
 
-    atom_source: str
+    atom_sources: List[str]
     output_dir: Path
     json_out: Path
     cutoff_utc: Optional[datetime] = None
@@ -59,11 +59,9 @@ class IngestionConfig:
     allowed_statuses: frozenset = field(
         default_factory=lambda: ALLOWED_CONTRACT_FOLDER_STATUSES
     )
-    allowed_type_code: str = ALLOWED_TYPE_CODE
-    allowed_subtype_codes: frozenset = field(
-        default_factory=lambda: ALLOWED_SUBTYPE_CODES
-    )
-    cpv_prefix: str = CPV_IT_SERVICES_PREFIX
+    allowed_type_codes: Optional[frozenset] = None
+    allowed_subtype_codes: Optional[frozenset] = None
+    cpv_filters: Optional[frozenset] = None
 
 
 @dataclass
@@ -221,36 +219,43 @@ def _normalize_cbc_code_text(elem: ET.Element) -> str:
 
 def entry_has_allowed_type_and_subtype(
     entry_el: ET.Element,
-    type_code: str = ALLOWED_TYPE_CODE,
-    subtype_codes: frozenset = ALLOWED_SUBTYPE_CODES,
+    type_codes: Optional[frozenset] = None,
+    subtype_codes: Optional[frozenset] = None,
 ) -> bool:
-    """True if entry has the expected TypeCode and a SubTypeCode in the allowed set."""
-    has_type = False
-    has_subtype = False
+    """True if entry has an allowed TypeCode and an allowed SubTypeCode.
+
+    When type_codes or subtype_codes is None, every value is accepted.
+    """
+    has_type = type_codes is None
+    has_subtype = subtype_codes is None
     for elem in entry_el.iter():
         local = _xml_local_name(elem.tag or "")
         if local == "SubTypeCode":
             val = _normalize_cbc_code_text(elem)
-            if val in subtype_codes:
+            if subtype_codes is None or val in subtype_codes:
                 has_subtype = True
         elif local == "TypeCode":
             val = _normalize_cbc_code_text(elem)
-            if val == type_code:
+            if type_codes is None or val in type_codes:
                 has_type = True
     return has_type and has_subtype
 
 
 def entry_has_it_services_cpv(
     entry_el: ET.Element,
-    cpv_prefix: str = CPV_IT_SERVICES_PREFIX,
+    cpv_filters: Optional[frozenset] = None,
 ) -> bool:
-    """True if entry has at least one CPV code starting with cpv_prefix."""
-    if not cpv_prefix:
+    """True if entry has at least one CPV code matching any entry in cpv_filters.
+
+    Each filter is matched with startswith — short strings act as prefixes,
+    full 8-digit codes act as exact matches.  None means every entry passes.
+    """
+    if not cpv_filters:
         return True
     for elem in entry_el.iter():
         if _xml_local_name(elem.tag or "") == "ItemClassificationCode":
             code = (elem.text or "").strip()
-            if code.startswith(cpv_prefix):
+            if any(code.startswith(f) for f in cpv_filters):
                 return True
     return False
 
@@ -387,6 +392,136 @@ def try_download(url: str, dest_path: Path, timeout: int = 30) -> Tuple[bool, st
         return False, str(e)
 
 
+def extract_enrichment_from_atom(entry_el: ET.Element) -> Dict[str, Any]:
+    """Extract LLM-enrichment fields determinable directly from the Atom XML entry.
+
+    Returns a partial enrichment dict shaped identically to the LLM schema so
+    it can be merged into ``accumulated`` before the LLM is called, skipping
+    re-extraction of fields already known from structured metadata.
+    """
+    CAC = f"{{{CAC_NS}}}"
+    CBC = f"{{{CBC_NS}}}"
+
+    enrichment: Dict[str, Any] = {}
+
+    # object_of_the_contract — ProcurementProject/Name
+    name_el = entry_el.find(f".//{CAC}ProcurementProject/{CBC}Name")
+    if name_el is not None:
+        val = (name_el.text or "").strip()
+        if val:
+            enrichment["object_of_the_contract"] = val
+
+    # execution_period — PlannedPeriod/DurationMeasure (unit code → Spanish label)
+    dur_el = entry_el.find(f".//{CAC}PlannedPeriod/{CBC}DurationMeasure")
+    execution_period: Optional[str] = None
+    dur_n: Optional[int] = None
+    dur_unit: Optional[str] = None
+    if dur_el is not None:
+        raw_dur = (dur_el.text or "").strip()
+        unit = (dur_el.get("unitCode") or "").upper()
+        unit_labels = {"MON": "Meses", "DAY": "Días", "WEE": "Semanas", "ANN": "Años"}
+        label = unit_labels.get(unit)
+        if raw_dur.isdigit() and label:
+            dur_n = int(raw_dur)
+            dur_unit = unit
+            execution_period = f"{dur_n} {label}"
+            enrichment["execution_period"] = execution_period
+
+    # assessment_criteria — all AwardingCriteria blocks with weights
+    crit_lines: List[str] = []
+    total_weight = 0.0
+    obj_weight = 0.0
+    price_weight = 0.0  # OBJ + SubTypeCode "1" = explicit price/cost formula
+    for crit in entry_el.findall(f".//{CAC}AwardingCriteria"):
+        desc_el = crit.find(f"{CBC}Description")
+        weight_el = crit.find(f"{CBC}WeightNumeric")
+        type_el = crit.find(f"{CBC}AwardingCriteriaTypeCode")
+        subtype_el = crit.find(f"{CBC}AwardingCriteriaSubTypeCode")
+        desc = (desc_el.text or "").strip() if desc_el is not None else ""
+        weight_str = (weight_el.text or "").strip() if weight_el is not None else ""
+        ctype = (type_el.text or "").strip() if type_el is not None else ""
+        subtype = (subtype_el.text or "").strip() if subtype_el is not None else ""
+        if not desc:
+            continue
+        try:
+            w = float(weight_str) if weight_str else 0.0
+        except ValueError:
+            w = 0.0
+        total_weight += w
+        if ctype == "OBJ":
+            obj_weight += w
+            if subtype == "1":
+                price_weight += w
+        crit_lines.append(f"{desc} [{weight_str} pts]" if weight_str else desc)
+    if crit_lines:
+        enrichment["assessment_criteria"] = "\n".join(crit_lines)
+
+    # discard_review.criteria_flags — fields computable from structured XML data
+    criteria_flags: Dict[str, Any] = {}
+
+    # place_of_execution_not_asturias — NUTS code from RealizedLocation
+    loc_el = entry_el.find(f".//{CAC}RealizedLocation")
+    if loc_el is not None:
+        code_el = loc_el.find(f".//{CBC}CountrySubentityCode")
+        region_el = loc_el.find(f".//{CBC}CountrySubentity")
+        nuts_code = (code_el.text or "").strip() if code_el is not None else ""
+        region = (region_el.text or "").strip() if region_el is not None else ""
+        if nuts_code:
+            criteria_flags["place_of_execution_not_asturias"] = {
+                "applies": nuts_code != "ES120",
+                "evidence": f"{region} ({nuts_code})" if region else nuts_code,
+                "pages": None,
+            }
+
+    # execution_period_under_2_months — checked per original unit (no conversion)
+    if dur_n is not None and dur_unit is not None:
+        under: Optional[bool] = None
+        if dur_unit == "MON":
+            under = dur_n < 2
+        elif dur_unit == "DAY":
+            under = dur_n < 60
+        elif dur_unit == "WEE":
+            under = dur_n < 8
+        elif dur_unit == "ANN":
+            under = False
+        if under is not None:
+            criteria_flags["execution_period_under_2_months"] = {
+                "applies": under,
+                "evidence": execution_period or "",
+                "pages": None,
+            }
+
+    # economic_offer_weight_over_70_points
+    # If all OBJ criteria combined < 70, price weight can't exceed 70.
+    # If explicit price criteria (SubTypeCode=1) alone > 70, flag it directly.
+    if total_weight > 0:
+        if price_weight > 70:
+            applies_eco: Optional[bool] = True
+            evidence_eco = f"Criterios de precio: {price_weight:.0f}/{total_weight:.0f} pts"
+        elif obj_weight < 70:
+            applies_eco = False
+            evidence_eco = (
+                f"Total criterios objetivos (límite superior precio): "
+                f"{obj_weight:.0f}/{total_weight:.0f} pts"
+            )
+        else:
+            applies_eco = None
+            evidence_eco = (
+                f"Criterios precio explícitos: {price_weight:.0f}/{total_weight:.0f} pts "
+                f"(revisión PCAP necesaria)"
+            )
+        criteria_flags["economic_offer_weight_over_70_points"] = {
+            "applies": applies_eco,
+            "evidence": evidence_eco,
+            "pages": None,
+        }
+
+    if criteria_flags:
+        enrichment["discard_review"] = {"criteria_flags": criteria_flags}
+
+    return enrichment
+
+
 def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
     """Extract tender fields from an Atom entry for JSON export."""
     ATOM = f"{{{ATOM_NS}}}"
@@ -403,6 +538,7 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
         "submission_deadline": extract_submission_deadline_from_entry(entry_el),
         "pcap_url": None,
         "ppt_url": None,
+        "cpv_codes": [],
     }
 
     id_el = entry_el.find(f".//{ATOM}id")
@@ -429,6 +565,16 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
     docs_by_name = {name: url for name, url in extract_technical_documents_from_entry(entry_el)}
     data["pcap_url"] = docs_by_name.get("PCAP.pdf")
     data["ppt_url"] = docs_by_name.get("PPT.pdf")
+
+    cpv_codes = []
+    for elem in entry_el.iter():
+        if _xml_local_name(elem.tag or "") == "ItemClassificationCode":
+            code = (elem.text or "").strip()
+            if code and code not in cpv_codes:
+                cpv_codes.append(code)
+    data["cpv_codes"] = cpv_codes
+
+    data["atom_enrichment"] = extract_enrichment_from_atom(entry_el)
 
     return data
 
@@ -466,82 +612,102 @@ def run_ingestion(
     ok = 0
     failed_with_detail: List[Tuple[str, str]] = []
     tenders_data: List[Dict[str, Any]] = []
+    seen_folders: Dict[str, int] = {}  # folder_name -> doc count of accepted entry
 
-    for feed_source, root, feed_updated in iter_feed_documents(
-        config.atom_source,
-        cutoff_utc,
-    ):
-        if verbose and cutoff_utc is not None:
-            updated_s = feed_updated.isoformat() if feed_updated else "?"
-            print(f"Using feed {feed_source} (updated {updated_s})", file=sys.stdout)
-        elif not verbose and cutoff_utc is not None:
-            updated_s = feed_updated.isoformat() if feed_updated else "?"
-            logger.info("Using feed %s (updated %s)", feed_source, updated_s)
-
-        entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
-        if not entries:
-            entries = list(root)
-
-        hit_limit = False
-        for entry in entries:
-            if not entry_has_allowed_contract_folder_status(entry, config.allowed_statuses):
-                continue
-            if not entry_has_allowed_type_and_subtype(entry, config.allowed_type_code, config.allowed_subtype_codes):
-                continue
-            if not entry_has_it_services_cpv(entry, config.cpv_prefix):
-                continue
-
-            tender_info = extract_tender_data(entry)
-            tenders_data.append(tender_info)
-
-            folder_name = get_entry_folder_name(entry)
-            entry_dir = config.output_dir / folder_name
-            detail_url = get_entry_detail_link(entry)
-            docs = extract_technical_documents_from_entry(entry)
-            logger.info(
-                "Processing tender [%s] (%d doc(s)) title=%r",
-                folder_name,
-                len(docs),
-                (tender_info.get("title") or "")[:120],
-            )
-            for name, url in docs:
-                if not url:
-                    continue
-                if config.max_tries and total >= config.max_tries:
-                    hit_limit = True
-                    break
-                total += 1
-                dest = entry_dir / name
-                if config.no_download:
-                    if verbose:
-                        print(f"  [{folder_name}] {name}\n    {url}")
-                        if detail_url:
-                            print(f"    Tender page: {detail_url}")
-                    continue
-                logger.info("Downloading [%s] %s -> %s", folder_name, name, dest)
-                success, msg = try_download(url, dest)
-                if success:
-                    ok += 1
-                    if verbose:
-                        print(f"[OK] {name} -> {dest}")
-                    logger.info("[OK] [%s] %s", folder_name, name)
-                else:
-                    if verbose:
-                        print(f"[FAIL] {name}: {msg}")
-                    logger.warning("[FAIL] [%s] %s: %s", folder_name, name, msg)
-                    if detail_url:
-                        failed_with_detail.append((name, detail_url))
-            if hit_limit:
-                break
+    hit_limit = False
+    for atom_source in config.atom_sources:
         if hit_limit:
-            if verbose and config.max_tries:
-                print(
-                    f"\nStopped: --try limit ({config.max_tries} PDFs). "
-                    "Next Atom pages in the chain were not fetched. "
-                    "Use --try 0 to download without this cap.",
-                    file=sys.stdout,
-                )
             break
+        for feed_source, root, feed_updated in iter_feed_documents(
+            atom_source,
+            cutoff_utc,
+        ):
+            if verbose and cutoff_utc is not None:
+                updated_s = feed_updated.isoformat() if feed_updated else "?"
+                print(f"Using feed {feed_source} (updated {updated_s})", file=sys.stdout)
+            elif not verbose and cutoff_utc is not None:
+                updated_s = feed_updated.isoformat() if feed_updated else "?"
+                logger.info("Using feed %s (updated %s)", feed_source, updated_s)
+
+            entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+            if not entries:
+                entries = list(root)
+
+            for entry in entries:
+                if not entry_has_allowed_contract_folder_status(entry, config.allowed_statuses):
+                    continue
+                if not entry_has_allowed_type_and_subtype(entry, config.allowed_type_codes, config.allowed_subtype_codes):
+                    continue
+                if not entry_has_it_services_cpv(entry, config.cpv_filters):
+                    continue
+
+                folder_name = get_entry_folder_name(entry)
+                docs = extract_technical_documents_from_entry(entry)
+                prev_doc_count = seen_folders.get(folder_name, -1)
+
+                if prev_doc_count >= len(docs):
+                    logger.info(
+                        "Skipping duplicate tender [%s] (%d doc(s); already accepted with %d)",
+                        folder_name,
+                        len(docs),
+                        prev_doc_count,
+                    )
+                    continue
+
+                if prev_doc_count >= 0:
+                    # Replace the weaker entry in tenders_data with this better one
+                    tenders_data = [t for t in tenders_data if t.get("id") != folder_name]
+
+                seen_folders[folder_name] = len(docs)
+
+                tender_info = extract_tender_data(entry)
+                tenders_data.append(tender_info)
+                entry_dir = config.output_dir / folder_name
+                detail_url = get_entry_detail_link(entry)
+                logger.info(
+                    "Processing tender [%s] (%d doc(s)) title=%r",
+                    folder_name,
+                    len(docs),
+                    (tender_info.get("title") or "")[:120],
+                )
+                for name, url in docs:
+                    if not url:
+                        continue
+                    if config.max_tries and total >= config.max_tries:
+                        hit_limit = True
+                        break
+                    total += 1
+                    dest = entry_dir / name
+                    if config.no_download:
+                        if verbose:
+                            print(f"  [{folder_name}] {name}\n    {url}")
+                            if detail_url:
+                                print(f"    Tender page: {detail_url}")
+                        continue
+                    logger.info("Downloading [%s] %s -> %s", folder_name, name, dest)
+                    success, msg = try_download(url, dest)
+                    if success:
+                        ok += 1
+                        if verbose:
+                            print(f"[OK] {name} -> {dest}")
+                        logger.info("[OK] [%s] %s", folder_name, name)
+                    else:
+                        if verbose:
+                            print(f"[FAIL] {name}: {msg}")
+                        logger.warning("[FAIL] [%s] %s: %s", folder_name, name, msg)
+                        if detail_url:
+                            failed_with_detail.append((name, detail_url))
+                if hit_limit:
+                    break
+            if hit_limit:
+                if verbose and config.max_tries:
+                    print(
+                        f"\nStopped: --try limit ({config.max_tries} PDFs). "
+                        "Next Atom pages in the chain were not fetched. "
+                        "Use --try 0 to download without this cap.",
+                        file=sys.stdout,
+                    )
+                break
 
     json_written: Optional[Path] = None
     if not config.no_download:

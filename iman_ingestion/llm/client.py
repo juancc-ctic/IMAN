@@ -215,6 +215,7 @@ def analyze_tender_proposal(
     title: str,
     party_name: str,
     tender_link: str,
+    atom_enrichment: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Analyze one tender: multimodal (PCAP PNG pages) when enabled and images exist.
 
@@ -229,6 +230,9 @@ def analyze_tender_proposal(
         title: Tender title from Atom metadata.
         party_name: Contracting party name.
         tender_link: Detail URL.
+        atom_enrichment: Partial enrichment dict pre-extracted from the Atom
+            XML entry (same schema as LLM output). Fields present here are
+            seeded into ``accumulated`` so the LLM skips re-extracting them.
 
     Returns:
         Parsed JSON object; on failure, a minimal structure with ``parse_error``.
@@ -242,58 +246,35 @@ def analyze_tender_proposal(
     page_count = len(images)
     use_multimodal = _use_multimodal_llm() and bool(images)
 
+    accumulated: Dict[str, Any] = {}
+    if atom_enrichment:
+        merge_tender_partial(accumulated, atom_enrichment)
+
     try:
         if use_multimodal:
             per_req = multimodal_images_per_request()
-            if len(images) <= per_req:
-                text_part = build_tender_multimodal_user_message(
-                    title=title,
-                    party_name=party_name,
-                    tender_link=tender_link,
-                )
-                user_content: List[Dict[str, Any]] = [
-                    {"type": "text", "text": text_part},
-                ]
-                for b64 in images:
-                    user_content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64}"},
-                        },
+            start = 0
+            batch_index = 0
+            while start < len(images):
+                if all_required_satisfied(accumulated):
+                    break
+                chunk = images[start : start + per_req]
+                batch_index += 1
+                first_page = start + 1
+                last_page = start + len(chunk)
+                start += len(chunk)
+                missing = list_missing_field_labels(accumulated)
+                if not missing:
+                    break
+                # Use the full single-shot prompt only when there is no prior
+                # accumulated state (standard first-and-only-batch case).
+                if batch_index == 1 and start >= len(images) and not accumulated:
+                    text_part = build_tender_multimodal_user_message(
+                        title=title,
+                        party_name=party_name,
+                        tender_link=tender_link,
                     )
-                messages = [
-                    {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ]
-            else:
-                accumulated: Dict[str, Any] = {}
-                start = 0
-                batch_index = 0
-                while start < len(images):
-                    if all_required_satisfied(accumulated):
-                        _synthesize_summary(
-                            client, accumulated,
-                            title=title, party_name=party_name, tender_link=tender_link,
-                        )
-                        return _return_tender_analysis(
-                            accumulated,
-                            total_pages_processed=page_count,
-                        )
-                    chunk = images[start : start + per_req]
-                    batch_index += 1
-                    first_page = start + 1
-                    last_page = start + len(chunk)
-                    start += len(chunk)
-                    missing = list_missing_field_labels(accumulated)
-                    if not missing:
-                        _synthesize_summary(
-                            client, accumulated,
-                            title=title, party_name=party_name, tender_link=tender_link,
-                        )
-                        return _return_tender_analysis(
-                            accumulated,
-                            total_pages_processed=page_count,
-                        )
+                else:
                     text_part = build_tender_multimodal_batch_user_message(
                         title=title,
                         party_name=party_name,
@@ -304,26 +285,45 @@ def analyze_tender_proposal(
                         first_page_1_indexed=first_page,
                         last_page_1_indexed=last_page,
                         missing_field_labels=missing,
-                        partial_json_compact=partial_json_for_prompt(
-                            accumulated,
-                        ),
+                        partial_json_compact=partial_json_for_prompt(accumulated),
                     )
-                    user_content = [{"type": "text", "text": text_part}]
-                    for b64 in chunk:
-                        user_content.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64}",
-                                },
-                            },
-                        )
+                user_content: List[Dict[str, Any]] = [{"type": "text", "text": text_part}]
+                for b64 in chunk:
+                    user_content.append(
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    )
+                messages = [
+                    {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ]
+                completion = client.chat.completions.create(
+                    model=chat_model_name(),
+                    messages=messages,
+                    temperature=0.15,
+                )
+                raw = completion.choices[0].message.content or "{}"
+                try:
+                    partial = parse_llm_json_object(raw)
+                    if not isinstance(partial, dict):
+                        partial = {}
+                except json.JSONDecodeError:
+                    partial = {}
+                merge_tender_partial(accumulated, partial, merge_mode="batch_overwrites")
+
+            if not all_required_satisfied(accumulated) and (pdf_text or "").strip():
+                gap_missing = list_missing_field_labels(accumulated)
+                if gap_missing:
+                    gap_user = build_tender_text_gapfill_user_message(
+                        pdf_document_text=pdf_text,
+                        title=title,
+                        party_name=party_name,
+                        tender_link=tender_link,
+                        missing_field_labels=gap_missing,
+                        partial_json_compact=partial_json_for_prompt(accumulated),
+                    )
                     messages = [
-                        {
-                            "role": "system",
-                            "content": TENDER_ANALYSIS_SYSTEM_PROMPT,
-                        },
-                        {"role": "user", "content": user_content},
+                        {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
+                        {"role": "user", "content": gap_user},
                     ]
                     completion = client.chat.completions.create(
                         model=chat_model_name(),
@@ -337,94 +337,58 @@ def analyze_tender_proposal(
                             partial = {}
                     except json.JSONDecodeError:
                         partial = {}
-                    merge_tender_partial(
-                        accumulated,
-                        partial,
-                        merge_mode="batch_overwrites",
+                    merge_tender_partial(accumulated, partial)
+
+        else:  # text-only
+            missing = list_missing_field_labels(accumulated)
+            if missing:
+                if accumulated:
+                    user = build_tender_text_gapfill_user_message(
+                        pdf_document_text=pdf_text or "(No PDF text could be loaded.)",
+                        title=title,
+                        party_name=party_name,
+                        tender_link=tender_link,
+                        missing_field_labels=missing,
+                        partial_json_compact=partial_json_for_prompt(accumulated),
                     )
-                    if all_required_satisfied(accumulated):
-                        _synthesize_summary(
-                            client, accumulated,
-                            title=title, party_name=party_name, tender_link=tender_link,
-                        )
+                else:
+                    user = build_tender_analysis_user_message(
+                        pdf_document_text=pdf_text or "(No PDF text could be loaded.)",
+                        title=title,
+                        party_name=party_name,
+                        tender_link=tender_link,
+                    )
+                messages = [
+                    {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ]
+                completion = client.chat.completions.create(
+                    model=chat_model_name(),
+                    messages=messages,
+                    temperature=0.15,
+                )
+                raw = completion.choices[0].message.content or "{}"
+                try:
+                    partial = parse_llm_json_object(raw)
+                    if not isinstance(partial, dict):
+                        partial = {}
+                except json.JSONDecodeError as exc:
+                    if not accumulated:
                         return _return_tender_analysis(
-                            accumulated,
+                            default_enrichment_on_error(
+                                f"Invalid JSON from model: {exc}: {raw[:1500]}",
+                            ),
                             total_pages_processed=page_count,
                         )
+                    partial = {}
+                merge_tender_partial(accumulated, partial)
 
-                if not all_required_satisfied(accumulated) and (
-                    pdf_text or ""
-                ).strip():
-                    gap_missing = list_missing_field_labels(accumulated)
-                    if gap_missing:
-                        gap_user = build_tender_text_gapfill_user_message(
-                            pdf_document_text=pdf_text,
-                            title=title,
-                            party_name=party_name,
-                            tender_link=tender_link,
-                            missing_field_labels=gap_missing,
-                            partial_json_compact=partial_json_for_prompt(
-                                accumulated,
-                            ),
-                        )
-                        messages = [
-                            {
-                                "role": "system",
-                                "content": TENDER_ANALYSIS_SYSTEM_PROMPT,
-                            },
-                            {"role": "user", "content": gap_user},
-                        ]
-                        completion = client.chat.completions.create(
-                            model=chat_model_name(),
-                            messages=messages,
-                            temperature=0.15,
-                        )
-                        raw = completion.choices[0].message.content or "{}"
-                        try:
-                            partial = parse_llm_json_object(raw)
-                            if not isinstance(partial, dict):
-                                partial = {}
-                        except json.JSONDecodeError:
-                            partial = {}
-                        merge_tender_partial(accumulated, partial)
-                _synthesize_summary(
-                    client, accumulated,
-                    title=title, party_name=party_name, tender_link=tender_link,
-                )
-                return _return_tender_analysis(
-                    accumulated,
-                    total_pages_processed=page_count,
-                )
-        if not use_multimodal:
-            user = build_tender_analysis_user_message(
-                pdf_document_text=pdf_text or "(No PDF text could be loaded.)",
-                title=title,
-                party_name=party_name,
-                tender_link=tender_link,
-            )
-            messages = [
-                {"role": "system", "content": TENDER_ANALYSIS_SYSTEM_PROMPT},
-                {"role": "user", "content": user},
-            ]
-
-        completion = client.chat.completions.create(
-            model=chat_model_name(),
-            messages=messages,
-            temperature=0.15,
+        _synthesize_summary(
+            client, accumulated,
+            title=title, party_name=party_name, tender_link=tender_link,
         )
-        raw = completion.choices[0].message.content or "{}"
-        try:
-            return _return_tender_analysis(
-                parse_llm_json_object(raw),
-                total_pages_processed=page_count,
-            )
-        except json.JSONDecodeError as exc:
-            return _return_tender_analysis(
-                default_enrichment_on_error(
-                    f"Invalid JSON from model: {exc}: {raw[:1500]}",
-                ),
-                total_pages_processed=page_count,
-            )
+        return _return_tender_analysis(accumulated, total_pages_processed=page_count)
+
     except Exception as exc:
         return _return_tender_analysis(
             default_enrichment_on_error(str(exc)),

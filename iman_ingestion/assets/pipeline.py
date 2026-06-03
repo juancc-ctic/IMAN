@@ -135,6 +135,7 @@ def persist_tenders(
                 submission_deadline=row.get("submission_deadline"),
                 pcap_url=row.get("pcap_url"),
                 ppt_url=row.get("ppt_url"),
+                cpv_codes=row.get("cpv_codes") or None,
             )
             session.merge(tender)
             count += 1
@@ -168,6 +169,7 @@ def tender_llm_enrichment(
         Path(raw_aggregated_ingestion["json_path"]).read_text(encoding="utf-8")
     )
     n = len(rows)
+    atom_enrichment_by_id = {r["id"]: r["atom_enrichment"] for r in rows if r.get("id") and r.get("atom_enrichment")}
     context.log.info("Enriching %d tender row(s) from current run.", n)
     with session_scope() as session:
         for i, row in enumerate(rows, start=1):
@@ -202,6 +204,7 @@ def tender_llm_enrichment(
                 title=t.title or "",
                 party_name=t.party_name or "",
                 tender_link=t.link or "",
+                atom_enrichment=atom_enrichment_by_id.get(tid),
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             pages_meta = data.get(IMAN_ENRICHMENT_TOTAL_PAGES_KEY)
@@ -292,6 +295,7 @@ def tender_triage(
             if not t:
                 continue
             t0 = time.perf_counter()
+            effective_profile = company_profile.resolve_for_cpv_codes(t.cpv_codes or [])
             try:
                 result = evaluate_tender(
                     tender_id=t.id,
@@ -300,7 +304,7 @@ def tender_triage(
                     tender_link=t.link or "",
                     enrichment=t.enrichment,
                     llm_client=llm_client,
-                    company_profile=company_profile,
+                    company_profile=effective_profile,
                     tender_embedding=list(t.summary_embedding) if t.summary_embedding is not None else None,
                     profile_embedding=profile_embedding,
                 )
@@ -396,9 +400,9 @@ def company_profile_sync() -> None:
         row.triage_dimensions = [asdict(d) for d in profile.triage_dimensions]
         row.tender_filters = {
             "contract_folder_statuses": sorted(tf.contract_folder_statuses),
-            "contract_type_code": tf.contract_type_code,
-            "contract_subtype_codes": sorted(tf.contract_subtype_codes),
-            "cpv_it_services_prefix": tf.cpv_it_services_prefix,
+            "contract_type_codes": sorted(tf.contract_type_codes) if tf.contract_type_codes is not None else None,
+            "contract_subtype_codes": sorted(tf.contract_subtype_codes) if tf.contract_subtype_codes is not None else None,
+            "cpv_filters": sorted(tf.cpv_filters) if tf.cpv_filters is not None else None,
         }
         row.action_plan_text = profile.action_plan_text
         row.action_plan_embedding = embedding

@@ -453,6 +453,8 @@ def merge_tender_partial(
         OPTIONAL_STRING_KEYS,
         merge_mode=merge_mode,
     )
+    # summary is not a required field but should be preserved when the LLM returns it
+    _merge_strings(accumulated, batch_partial, ("summary",), merge_mode=merge_mode)
     _merge_top_level_pages(accumulated, batch_partial)
     _merge_packages(accumulated, batch_partial)
     _merge_outsourcing(accumulated, batch_partial, merge_mode=merge_mode)

@@ -45,6 +45,7 @@ def _iman_ingestion_resource() -> ImanIngestionResource:
         max_tries = 0
     return ImanIngestionResource(
         atom_source=os.environ.get("IMAN_ATOM_SOURCE", ""),
+        atom_sources=os.environ.get("IMAN_ATOM_SOURCES", ""),
         data_dir=os.environ.get("IMAN_DATA_DIR", "/data"),
         json_filename=os.environ.get(
             "IMAN_JSON_FILENAME",

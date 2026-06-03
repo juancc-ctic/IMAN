@@ -5,24 +5,20 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
 
 _DEFAULT_STATUSES: frozenset[str] = frozenset({"PRE", "PUB"})
-_DEFAULT_TYPE_CODE = "2"
-_DEFAULT_SUBTYPE_CODES: frozenset[str] = frozenset(
-    {"5", "7", "8", "9", "11", "12", "20", "23", "24", "25", "27"}
-)
-_DEFAULT_CPV_PREFIX = "72"
 
 
 @dataclass(frozen=True)
 class TenderFilters:
     contract_folder_statuses: frozenset[str] = field(default_factory=lambda: _DEFAULT_STATUSES)
-    contract_type_code: str = _DEFAULT_TYPE_CODE
-    contract_subtype_codes: frozenset[str] = field(default_factory=lambda: _DEFAULT_SUBTYPE_CODES)
-    cpv_it_services_prefix: str = _DEFAULT_CPV_PREFIX
+    contract_type_codes: Optional[frozenset[str]] = None
+    contract_subtype_codes: Optional[frozenset[str]] = None
+    cpv_filters: Optional[frozenset[str]] = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +29,17 @@ class TriageDimension:
 
 
 @dataclass(frozen=True)
+class CpvProfile:
+    """Per-CPV-prefix overrides for triage evaluation."""
+
+    cpv_prefixes: tuple[str, ...]
+    interest_areas: Optional[list[str]] = None
+    company_fields: Optional[list[str]] = None
+    past_tender_categories: Optional[list[str]] = None
+    triage_dimensions: Optional[list[TriageDimension]] = None
+
+
+@dataclass(frozen=True)
 class CompanyProfile:
     interest_areas: list[str]
     company_fields: list[str]
@@ -40,6 +47,26 @@ class CompanyProfile:
     triage_dimensions: list[TriageDimension] = field(default_factory=list)
     tender_filters: TenderFilters = field(default_factory=TenderFilters)
     action_plan_text: str = ""
+    cpv_profiles: list[CpvProfile] = field(default_factory=list)
+
+    def resolve_for_cpv_codes(self, cpv_codes: list[str]) -> "CompanyProfile":
+        """Return a profile with overrides applied for the first matching CpvProfile.
+
+        Matching: the CpvProfile.cpv_prefix is a prefix of any code in cpv_codes.
+        Falls back to self if no match or cpv_profiles is empty.
+        """
+        for cpv_profile in self.cpv_profiles:
+            if any(code.startswith(p) for p in cpv_profile.cpv_prefixes for code in cpv_codes):
+                return CompanyProfile(
+                    interest_areas=cpv_profile.interest_areas if cpv_profile.interest_areas is not None else self.interest_areas,
+                    company_fields=cpv_profile.company_fields if cpv_profile.company_fields is not None else self.company_fields,
+                    past_tender_categories=cpv_profile.past_tender_categories if cpv_profile.past_tender_categories is not None else self.past_tender_categories,
+                    triage_dimensions=cpv_profile.triage_dimensions if cpv_profile.triage_dimensions is not None else self.triage_dimensions,
+                    tender_filters=self.tender_filters,
+                    action_plan_text=self.action_plan_text,
+                    cpv_profiles=self.cpv_profiles,
+                )
+        return self
 
 
 def _default_profile_path() -> Path:
@@ -57,20 +84,20 @@ def _parse_tender_filters(data: dict) -> TenderFilters:
     statuses_raw = raw.get("contract_folder_statuses")
     statuses = frozenset(str(s) for s in statuses_raw) if statuses_raw else _DEFAULT_STATUSES
 
-    type_code = str(raw["contract_type_code"]).strip() if raw.get("contract_type_code") else _DEFAULT_TYPE_CODE
+    type_codes_raw = raw.get("contract_type_codes")
+    type_codes: Optional[frozenset[str]] = frozenset(str(c) for c in type_codes_raw) if type_codes_raw else None
 
     subtypes_raw = raw.get("contract_subtype_codes")
-    subtypes = frozenset(str(s) for s in subtypes_raw) if subtypes_raw else _DEFAULT_SUBTYPE_CODES
+    subtypes: Optional[frozenset[str]] = frozenset(str(s) for s in subtypes_raw) if subtypes_raw else None
 
-    cpv = str(raw.get("cpv_it_services_prefix") or "").strip()
-    if not cpv and "cpv_it_services_prefix" not in raw:
-        cpv = _DEFAULT_CPV_PREFIX
+    cpv_filters_raw = raw.get("cpv_filters")
+    cpv_filters: Optional[frozenset[str]] = frozenset(str(f) for f in cpv_filters_raw) if cpv_filters_raw else None
 
     return TenderFilters(
         contract_folder_statuses=statuses,
-        contract_type_code=type_code,
+        contract_type_codes=type_codes,
         contract_subtype_codes=subtypes,
-        cpv_it_services_prefix=cpv,
+        cpv_filters=cpv_filters,
     )
 
 
@@ -89,6 +116,30 @@ def _parse_triage_dimensions(data: dict) -> list[TriageDimension]:
                 weight=weight,
             ))
     return dims
+
+
+def _parse_cpv_profiles(data: dict) -> list[CpvProfile]:
+    raw = data.get("cpv_profiles") or []
+    profiles: list[CpvProfile] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("cpv_prefixes"):
+            prefixes = tuple(str(p) for p in item["cpv_prefixes"])
+        elif item.get("cpv_prefix"):
+            prefixes = (str(item["cpv_prefix"]),)
+        else:
+            continue
+        dims_raw = item.get("triage_dimensions")
+        dims = _parse_triage_dimensions({"triage_dimensions": dims_raw}) if dims_raw is not None else None
+        profiles.append(CpvProfile(
+            cpv_prefixes=prefixes,
+            interest_areas=list(item["interest_areas"]) if item.get("interest_areas") is not None else None,
+            company_fields=list(item["company_fields"]) if item.get("company_fields") is not None else None,
+            past_tender_categories=list(item["past_tender_categories"]) if item.get("past_tender_categories") is not None else None,
+            triage_dimensions=dims,
+        ))
+    return profiles
 
 
 def load_company_profile(path: Path | None = None) -> CompanyProfile:
@@ -111,4 +162,5 @@ def load_company_profile(path: Path | None = None) -> CompanyProfile:
         triage_dimensions=_parse_triage_dimensions(data),
         tender_filters=_parse_tender_filters(data),
         action_plan_text=str(data.get("action_plan_text") or "").strip(),
+        cpv_profiles=_parse_cpv_profiles(data),
     )

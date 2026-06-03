@@ -56,9 +56,11 @@ tender_filters:
     - "PRE"
     - "PUB"
 
-  # Código de tipo de contrato. 2 = Contratos de servicios.
-  # Normalmente no es necesario cambiarlo.
-  contract_type_code: "2"
+  # Tipos de contrato aceptados (OR). Null = aceptar todos.
+  contract_type_codes:
+    - "2" # Servicios
+    - "1" # Suministros
+    - ""
 
   # Subtipos de servicio aceptados. Elimina un código para excluir ese subtipo
   # o añade nuevos si quieres ampliar la búsqueda.
@@ -73,23 +75,143 @@ tender_filters:
   #   24 — Servicios sociales
   #   25 — Servicios sanitarios y veterinarios
   #   27 — Otros servicios
-  contract_subtype_codes:
-    - "5"
-    - "7"
-    - "8"
-    - "9"
-    - "11"
-    - "12"
-    - "20"
-    - "23"
-    - "24"
-    - "25"
-    - "27"
+  contract_subtype_codes:  # null — accept every subtype code
+    - "5"   # Tecnologías de la información y comunicaciones (TIC)
+    - "7"   # Investigación y desarrollo
+    - "8"   # Consultoría de gestión y afines
+    - "9"   # Informática y servicios conexos
+    - "11"  # Servicios de elaboración de datos
+    - "12"  # Consultoría de proyectos
+    - "20"  # Enseñanza y formación profesional
+    - "23"  # Servicios sociales y de salud
+    - "24"  # Servicios sociales
+    - "25"  # Servicios sanitarios y veterinarios
+    - "27"  # Otros servicios
 
-  # Prefijo de código CPV para filtrar por categoría de servicio.
-  # 72 = CPV 72000000–72999999 (Servicios de tecnologías de la información).
-  # Deja vacío ("") para desactivar el filtro CPV y aceptar cualquier categoría.
-  cpv_it_services_prefix: "72"
+  # Filtros CPV (OR). Cadenas cortas actúan como prefijos ("72" = todos los TI),
+  # cadenas de 8 dígitos actúan como códigos exactos ("72212461").
+  # Deja la clave ausente o vacía para aceptar cualquier categoría.
+  cpv_filters:
+    - "72"   # CPV 72xxxxxx — Servicios de tecnologías de la información
+    - "80"   # CPV 80xxxxxx — Servicios de educación y formación
+
+# ---------------------------------------------------------------------------
+# Perfiles por prefijo CPV — sobreescriben interest_areas, company_fields,
+# past_tender_categories y/o triage_dimensions para licitaciones cuyo código
+# CPV empieza por alguno de los prefijos indicados. El primer perfil que
+# coincida gana. Omite una clave para heredar el valor global.
+#
+# Usa cpv_prefix (cadena) para un único prefijo, o cpv_prefixes (lista) para
+# asignar varios prefijos al mismo perfil:
+#   - cpv_prefix: "72"          # un solo prefijo
+#   - cpv_prefixes: ["72", "73"] # varios prefijos comparten el mismo perfil
+#
+# Ausencia de esta sección = un único perfil global para todos los contratos.
+# ---------------------------------------------------------------------------
+cpv_profiles:
+
+  # -------------------------------------------------------------------
+  # CPV 72xx — Servicios de tecnologías de la información
+  # Hereda interest_areas y company_fields globales. Solo sobreescribe
+  # las descripciones de las dimensiones para enfocarlas en TIC/IA/IoT.
+  # -------------------------------------------------------------------
+  - cpv_prefix: ["72", "48900000"]
+    triage_dimensions:
+      - name: "Alineación temática"
+        weight: 2.0
+        description: >
+          En qué medida el objeto del contrato encaja con las capacidades tecnológicas
+          de la empresa: inteligencia artificial, machine learning, IoT, computación
+          cuántica, espacios de datos, ciberseguridad, plataformas digitales,
+          realidad aumentada/mixta o sistemas GIS. Puntúa más alto cuanto mayor sea
+          la superposición con las líneas tecnológicas estratégicas.
+
+      - name: "Encaje de ámbito"
+        weight: 1.0
+        description: >
+          Si el contrato pertenece a los campos TIC, I+D+i, inteligencia artificial,
+          IoT, consultoría tecnológica o estándares web declarados por la empresa.
+          Penaliza si el ámbito es puramente administrativo o de mantenimiento
+          sin componente tecnológica relevante.
+
+      - name: "Condiciones de ejecución"
+        weight: 1.0
+        description: >
+          Idoneidad global del contrato. Considera el lugar de ejecución (penaliza
+          fuera de Asturias), el plazo (penaliza menos de 2 meses), la carga de
+          mantenimiento (penaliza más de 1 año o asistencia técnica pura), y la
+          viabilidad técnica: si los perfiles y certificaciones requeridos (ISO,
+          ENS, PMI u otros) coinciden con las capacidades internas habituales.
+
+      - name: "Criterios de valoración"
+        weight: 1.0
+        description: >
+          Si los criterios de adjudicación favorecen la calidad técnica sobre el
+          precio. Penaliza cuando el peso del precio supera el 50 % de la
+          puntuación total, ya que reduce el margen de diferenciación técnica
+          en propuestas TIC de alta complejidad.
+
+  # -------------------------------------------------------------------
+  # CPV 80xx — Servicios de educación y formación
+  # Sobreescribe interest_areas con foco en capacitación digital y
+  # adapta las dimensiones al contexto formativo.
+  # -------------------------------------------------------------------
+  - cpv_prefix: "80"
+    interest_areas:
+      - "Formación en competencias digitales para empleados públicos y empresas"
+      - "Diseño y desarrollo de programas de capacitación en inteligencia artificial y datos"
+      - "Formación en ciberseguridad, ENS y cumplimiento normativo (RGPD)"
+      - "Capacitación en transformación digital de administraciones públicas y PYMES"
+      - "Formación en IoT, computación en la nube y arquitecturas distribuidas"
+      - "Programas de upskilling y reskilling en tecnologías emergentes"
+      - "Diseño de materiales didácticos y entornos virtuales de aprendizaje (LMS, e-learning)"
+      - "Formación en estándares web, accesibilidad (WCAG) y tecnologías abiertas"
+      - "Talleres y laboratorios de innovación tecnológica (living labs, hackathons)"
+
+    past_tender_categories:
+      - "Formación en competencias digitales para empleados públicos"
+      - "Cursos y talleres de inteligencia artificial aplicada"
+      - "Programas de ciberseguridad y ENS para administraciones"
+      - "Diseño de itinerarios formativos en transformación digital"
+      - "Desarrollo de plataformas e-learning y contenidos multimedia"
+      - "Formación técnica en IoT, cloud y arquitecturas de datos"
+      - "Capacitación en accesibilidad web y estándares W3C"
+
+    triage_dimensions:
+      - name: "Alineación temática"
+        weight: 2.0
+        description: >
+          En qué medida el programa formativo encaja con las áreas de capacitación
+          de la empresa: competencias digitales, IA aplicada, ciberseguridad, IoT,
+          transformación digital, accesibilidad web o tecnologías emergentes.
+          Puntúa más alto cuanto más específico y técnico sea el contenido formativo
+          en relación con las líneas estratégicas de la empresa.
+
+      - name: "Encaje de ámbito"
+        weight: 1.0
+        description: >
+          Si el contrato formativo entra dentro de los campos de negocio declarados:
+          formación y capacitación tecnológica, TIC, I+D+i o transferencia de
+          conocimiento. Penaliza si es formación genérica no tecnológica (idiomas,
+          habilidades blandas sin componente digital, PRL básico, etc.).
+
+      - name: "Condiciones de ejecución"
+        weight: 1.0
+        description: >
+          Idoneidad del contrato formativo. Considera el lugar de impartición
+          (penaliza fuera de Asturias salvo modalidad online), la duración
+          (penaliza acciones muy cortas de menos de 8 horas o contratos de
+          asistencia técnica permanente), y si los perfiles docentes requeridos
+          (certificaciones pedagógicas, habilitaciones específicas) son asumibles
+          internamente.
+
+      - name: "Criterios de valoración"
+        weight: 1.0
+        description: >
+          Si los criterios de adjudicación valoran la calidad metodológica y la
+          experiencia formativa sobre el precio. Penaliza cuando el peso del precio
+          supera el 50 % o cuando no se valoran aspectos como metodología, materiales
+          o cualificación del equipo docente.
 
 # ---------------------------------------------------------------------------
 # Dimensiones de triaje — el LLM puntúa cada dimensión de 0 a 5.
