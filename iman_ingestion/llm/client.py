@@ -30,7 +30,7 @@ from iman_ingestion.llm.tender_fields import (
 _DEFAULT_EMBEDDINGS_API_BASE = "http://192.168.4.32:8116/v1"
 _DEFAULT_EMBEDDINGS_MODEL = "Snowflake/snowflake-arctic-embed-l-v2.0"
 _DEFAULT_LLM_BASE_URL = "http://192.168.4.32:4000/v1"
-_DEFAULT_LLM_MODEL = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+_DEFAULT_LLM_MODEL = "google/gemma-4-31B-it-instruct"
 
 # Merged into ``analyze_tender_proposal`` output for logging (not from the LLM).
 IMAN_ENRICHMENT_TOTAL_PAGES_KEY = "_iman_total_pages_processed"

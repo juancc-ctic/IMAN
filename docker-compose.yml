@@ -40,7 +40,7 @@ services:
       EMBEDDINGS_API_BASE: ${EMBEDDINGS_API_BASE:-http://192.168.4.32:8116/v1}
       EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-Snowflake/snowflake-arctic-embed-l-v2.0}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://192.168.4.32:4000/v1}
-      LLM_MODEL: ${LLM_MODEL:-mistralai/Mistral-Small-3.2-24B-Instruct-2506}
+      LLM_MODEL: ${LLM_MODEL:-google/gemma-4-31B-it-instruct}
       LLM_API_KEY: ${LLM_API_KEY:-}
       IMAN_LLM_PRINT_JSON: ${IMAN_LLM_PRINT_JSON:-0}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
