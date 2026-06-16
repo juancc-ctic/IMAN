@@ -357,7 +357,7 @@ def tender_embeddings(
             tender_db = session.get(Tender, tid)
             if not (tender_db and isinstance(tender_db.enrichment, dict)):
                 continue
-            summary = tender_db.enrichment.get("summary", "").strip()
+            summary = (tender_db.enrichment.get("summary") or "").strip()
             if not summary:
                 continue
 
