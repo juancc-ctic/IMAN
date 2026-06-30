@@ -169,11 +169,13 @@ def tender_llm_enrichment(
     )
     n = len(rows)
     context.log.info("Enriching %d tender row(s) from current run.", n)
+    seen_ids: set[str] = set()
     with session_scope() as session:
         for i, row in enumerate(rows, start=1):
             tid = row.get("id")
-            if not tid:
+            if not tid or tid in seen_ids:
                 continue
+            seen_ids.add(tid)
             t = session.get(Tender, tid)
             if not t:
                 continue
@@ -283,11 +285,13 @@ def tender_triage(
             profile_record and profile_record.action_plan_embedding is not None
         ) else None
 
+    seen_ids_triage: set[str] = set()
     with session_scope() as session:
         for i, row in enumerate(rows, start=1):
             tid = row.get("id")
-            if not tid:
+            if not tid or tid in seen_ids_triage:
                 continue
+            seen_ids_triage.add(tid)
             t = session.get(Tender, tid)
             if not t:
                 continue
@@ -349,11 +353,13 @@ def tender_embeddings(
     batch_size = int(os.environ.get("IMAN_EMBED_BATCH_SIZE", "16"))
     total_chunks = 0
 
+    seen_ids_embed: set[str] = set()
     with session_scope() as session:
         for row in rows:
             tid = row.get("id")
-            if not tid:
+            if not tid or tid in seen_ids_embed:
                 continue
+            seen_ids_embed.add(tid)
             tender_db = session.get(Tender, tid)
             if not (tender_db and isinstance(tender_db.enrichment, dict)):
                 continue
