@@ -178,6 +178,24 @@ def iter_feed_documents(
         current = resolve_next_feed_source(current, next_href)
 
 
+# XML 1.0 allows only: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+# Build pattern with chr() to avoid encoding issues in source files.
+_INVALID_XML10_CHARS = re.compile(
+    "[^\x09\x0A\x0D\x20-%(d7ff)s%(e000)s-%(fffd)s%(u10000)s-%(u10ffff)s]" % {
+        "d7ff": chr(0xD7FF),
+        "e000": chr(0xE000),
+        "fffd": chr(0xFFFD),
+        "u10000": chr(0x10000),
+        "u10ffff": chr(0x10FFFF),
+    }
+)
+
+def _sanitize_xml_bytes(data: bytes, encoding: str = "utf-8") -> bytes:
+    """Strip characters illegal in XML 1.0 that would cause ParseError."""
+    text = data.decode(encoding, errors="replace")
+    return _INVALID_XML10_CHARS.sub("", text).encode("utf-8")
+
+
 def load_atom_tree(source: str) -> ET.ElementTree:
     """Parse ATOM XML from a local file path or an http(s) URL."""
     stripped = source.strip()
@@ -188,7 +206,9 @@ def load_atom_tree(source: str) -> ET.ElementTree:
             timeout=FEED_FETCH_TIMEOUT_SEC,
         )
         response.raise_for_status()
-        return ET.parse(io.BytesIO(response.content))
+        encoding = response.encoding or response.apparent_encoding or "utf-8"
+        content = _sanitize_xml_bytes(response.content, encoding)
+        return ET.parse(io.BytesIO(content))
     path = Path(stripped)
     if not path.exists():
         raise FileNotFoundError(str(path))
