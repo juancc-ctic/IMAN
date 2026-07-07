@@ -178,22 +178,16 @@ def iter_feed_documents(
         current = resolve_next_feed_source(current, next_href)
 
 
-# XML 1.0 allows only: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
-# Build pattern with chr() to avoid encoding issues in source files.
-_INVALID_XML10_CHARS = re.compile(
-    "[^\x09\x0A\x0D\x20-%(d7ff)s%(e000)s-%(fffd)s%(u10000)s-%(u10ffff)s]" % {
-        "d7ff": chr(0xD7FF),
-        "e000": chr(0xE000),
-        "fffd": chr(0xFFFD),
-        "u10000": chr(0x10000),
-        "u10ffff": chr(0x10FFFF),
-    }
-)
+# Strip single-byte control characters that are illegal in XML 1.0 regardless of encoding.
+# Valid XML 1.0: #x9 (tab), #xA (LF), #xD (CR), [#x20-#xD7FF], [#xE000-#xFFFD], [#x10000-#x10FFFF].
+# Bytes 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F are always single bytes in any encoding (ASCII-safe).
+# Operating on raw bytes avoids re-encoding and keeps the XML encoding declaration intact.
+_INVALID_XML10_CTRL_BYTES = re.compile(rb"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
-def _sanitize_xml_bytes(data: bytes, encoding: str = "utf-8") -> bytes:
-    """Strip characters illegal in XML 1.0 that would cause ParseError."""
-    text = data.decode(encoding, errors="replace")
-    return _INVALID_XML10_CHARS.sub("", text).encode("utf-8")
+
+def _sanitize_xml_bytes(data: bytes) -> bytes:
+    """Strip control bytes that are illegal in XML 1.0 before parsing."""
+    return _INVALID_XML10_CTRL_BYTES.sub(b"", data)
 
 
 def load_atom_tree(source: str) -> ET.ElementTree:
@@ -206,9 +200,7 @@ def load_atom_tree(source: str) -> ET.ElementTree:
             timeout=FEED_FETCH_TIMEOUT_SEC,
         )
         response.raise_for_status()
-        encoding = response.encoding or response.apparent_encoding or "utf-8"
-        content = _sanitize_xml_bytes(response.content, encoding)
-        return ET.parse(io.BytesIO(content))
+        return ET.parse(io.BytesIO(_sanitize_xml_bytes(response.content)))
     path = Path(stripped)
     if not path.exists():
         raise FileNotFoundError(str(path))
