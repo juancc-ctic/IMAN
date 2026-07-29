@@ -72,7 +72,7 @@ cordis_load_job = define_asset_job(
     selection=AssetSelection.assets(load_cordis_data, eu_project_embeddings),
 )
 
-_cron = os.environ.get("IMAN_CRON_SCHEDULE", "0 6 * * *")
+_cron = os.environ.get("IMAN_CRON_SCHEDULE", "0 21 * * *")
 
 defs = Definitions(
     assets=[
