@@ -150,7 +150,11 @@ def iter_feed_documents(
             break
         seen.add(key)
 
-        tree = load_atom_tree(current)
+        try:
+            tree = load_atom_tree(current)
+        except Exception as exc:
+            logger.warning("Skipping unparseable feed page, stopping pagination: %s — %s", current, exc)
+            break
         root = tree.getroot()
         feed_updated = get_feed_updated_utc(root)
 
@@ -178,6 +182,29 @@ def iter_feed_documents(
         current = resolve_next_feed_source(current, next_href)
 
 
+# Matches the encoding="..." attribute in the XML prolog.
+_XML_ENCODING_RE = re.compile(rb'(<\?xml\b[^?]*?\bencoding\s*=\s*)["\']([^"\']*)["\']')
+# Control characters illegal in XML 1.0 (tab/LF/CR are kept).
+_INVALID_XML10_CTRL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+
+def _sanitize_xml_bytes(data: bytes) -> bytes:
+    """Fix invalid encoding bytes and illegal control chars in XML before parsing.
+
+    Feeds sometimes declare UTF-8 but contain ISO-8859-1/Windows-1252 high bytes
+    (e.g. 0x96 en-dash, 0x85 ellipsis) that are invalid UTF-8 lead/continuation
+    bytes and make expat raise 'not well-formed (invalid token)'.
+    """
+    m = _XML_ENCODING_RE.search(data[:256])
+    declared_enc = m.group(2).decode("ascii", errors="replace").strip() if m else "utf-8"
+    text = data.decode(declared_enc, errors="replace")
+    text = _INVALID_XML10_CTRL_RE.sub("", text)
+    clean = text.encode("utf-8")
+    if m:
+        clean = _XML_ENCODING_RE.sub(rb'\1"UTF-8"', clean, count=1)
+    return clean
+
+
 def load_atom_tree(source: str) -> ET.ElementTree:
     """Parse ATOM XML from a local file path or an http(s) URL."""
     stripped = source.strip()
@@ -188,7 +215,7 @@ def load_atom_tree(source: str) -> ET.ElementTree:
             timeout=FEED_FETCH_TIMEOUT_SEC,
         )
         response.raise_for_status()
-        return ET.parse(io.BytesIO(response.content))
+        return ET.parse(io.BytesIO(_sanitize_xml_bytes(response.content)))
     path = Path(stripped)
     if not path.exists():
         raise FileNotFoundError(str(path))
