@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import io
 import json
 import logging
@@ -150,10 +151,18 @@ def iter_feed_documents(
             break
         seen.add(key)
 
+        # Network/IO errors propagate so the run fails visibly (and can be retried).
+        # A malformed page mid-chain ends pagination; a malformed first page is fatal.
         try:
             tree = load_atom_tree(current)
-        except Exception as exc:
-            logger.warning("Skipping unparseable feed page, stopping pagination: %s — %s", current, exc)
+        except ET.ParseError as exc:
+            if len(seen) == 1:
+                raise
+            logger.error(
+                "Unparseable feed page, stopping pagination; later pages are NOT ingested: %s — %s",
+                current,
+                exc,
+            )
             break
         root = tree.getroot()
         feed_updated = get_feed_updated_utc(root)
@@ -188,16 +197,38 @@ _XML_ENCODING_RE = re.compile(rb'(<\?xml\b[^?]*?\bencoding\s*=\s*)["\']([^"\']*)
 _INVALID_XML10_CTRL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
 
+def _cp1252_fallback_handler(err: UnicodeDecodeError) -> Tuple[str, int]:
+    """Decode a byte that is invalid UTF-8 as Windows-1252 (Latin-1 for its 5 holes)."""
+    b = err.object[err.start : err.start + 1]
+    try:
+        ch = b.decode("cp1252")
+    except UnicodeDecodeError:
+        ch = b.decode("latin-1")
+    return ch, err.start + 1
+
+
+codecs.register_error("iman_cp1252_fallback", _cp1252_fallback_handler)
+
+
 def _sanitize_xml_bytes(data: bytes) -> bytes:
     """Fix invalid encoding bytes and illegal control chars in XML before parsing.
 
     Feeds sometimes declare UTF-8 but contain ISO-8859-1/Windows-1252 high bytes
     (e.g. 0x96 en-dash, 0x85 ellipsis) that are invalid UTF-8 lead/continuation
-    bytes and make expat raise 'not well-formed (invalid token)'.
+    bytes and make expat raise 'not well-formed (invalid token)'. Valid UTF-8
+    sequences are kept; each invalid byte is decoded as Windows-1252.
     """
     m = _XML_ENCODING_RE.search(data[:256])
-    declared_enc = m.group(2).decode("ascii", errors="replace").strip() if m else "utf-8"
-    text = data.decode(declared_enc, errors="replace")
+    declared_enc = m.group(2).decode("ascii", errors="replace").strip() if m else ""
+    try:
+        codec_name = codecs.lookup(declared_enc or "utf-8").name
+    except LookupError:
+        logger.warning("Unknown XML encoding %r; decoding as UTF-8.", declared_enc)
+        codec_name = "utf-8"
+    if codec_name == "utf-8":
+        text = data.decode("utf-8", errors="iman_cp1252_fallback")
+    else:
+        text = data.decode(codec_name, errors="replace")
     text = _INVALID_XML10_CTRL_RE.sub("", text)
     clean = text.encode("utf-8")
     if m:
@@ -215,11 +246,13 @@ def load_atom_tree(source: str) -> ET.ElementTree:
             timeout=FEED_FETCH_TIMEOUT_SEC,
         )
         response.raise_for_status()
-        return ET.parse(io.BytesIO(_sanitize_xml_bytes(response.content)))
-    path = Path(stripped)
-    if not path.exists():
-        raise FileNotFoundError(str(path))
-    return ET.parse(path)
+        data = response.content
+    else:
+        path = Path(stripped)
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        data = path.read_bytes()
+    return ET.parse(io.BytesIO(_sanitize_xml_bytes(data)))
 
 
 def get_document_url_from_uri_text(uri_text: str) -> str:
