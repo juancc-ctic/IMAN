@@ -115,6 +115,21 @@ python seeds/generate_seed.py
 
 ---
 
+## Dev Container (VS Code)
+
+Abre el repositorio en VS Code y ejecuta **Dev Containers: Reopen in Container**. Se levanta un contenedor de desarrollo (Python 3.11, `poppler-utils`, `psql`) junto a un Postgres con pgvector propio (independiente del stack de `docker compose up`). Al crearse instala el paquete en modo editable y aplica las migraciones. Las variables de `.env` se cargan automáticamente.
+
+Desde la terminal del contenedor:
+
+```bash
+pytest tests/
+dagster dev -m iman_ingestion.definitions -h 0.0.0.0 -p 3000   # UI en http://localhost:3000
+uvicorn iman_ingestion.api.app:app --host 0.0.0.0 --port 8000 --reload
+psql postgresql://postgres:postgres@postgres:5432/iman
+```
+
+---
+
 ## Instalación local (desarrollo)
 
 ```bash

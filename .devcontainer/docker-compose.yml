@@ -1,0 +1,32 @@
+# Layered on top of ../docker-compose.yml by devcontainer.json.
+# Relative paths resolve against the repo root (the first compose file's directory).
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DAGSTER_HOME: /home/vscode/.dagster
+      DAGSTER_DISABLE_TELEMETRY: "1"
+      IMAN_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/iman
+      IMAN_DATA_DIR: /data
+    volumes:
+      - .:/workspaces/IMAN:cached
+      - iman_dev_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Don't publish 5432 on the host so this doesn't clash with a running `docker compose up`
+  # stack; devcontainer.json forwards it instead.
+  postgres:
+    ports: !reset []
+
+volumes:
+  iman_dev_data:

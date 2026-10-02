@@ -1,0 +1,30 @@
+{
+  "name": "IMAN",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.yml"],
+  "service": "dev",
+  // Only start Postgres; run Dagster/API from inside the container against live source.
+  "runServices": ["dev", "postgres"],
+  "workspaceFolder": "/workspaces/IMAN",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "forwardPorts": [3000, 8000, "postgres:5432"],
+  "portsAttributes": {
+    "3000": { "label": "Dagster UI" },
+    "8000": { "label": "API" },
+    "postgres:5432": { "label": "Postgres", "onAutoForward": "silent" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}
