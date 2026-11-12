@@ -111,3 +111,17 @@ Parses paginated ATOM feeds (XML with Atom/CBC/CAC namespaces), follows `rel="ne
 ## Legacy Code
 
 The `iman/`, `iman_dagster/`, and `iman_pipelines/` directories contain earlier iterations and are not part of the active pipeline. The active package is `iman_ingestion/`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for juancc-ctic/IMAN, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` at the repo root and ADRs in `docs/adr/`. See `docs/agents/domain.md`.
