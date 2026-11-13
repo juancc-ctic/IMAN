@@ -129,7 +129,8 @@ def persist_tenders(
     """Apply the run's feed versions through the Tender Lifecycle module.
 
     Creates newly discovered Tenders, refreshes known ones, and records Tender
-    Changes and Awards for Tracked Tenders.
+    Changes and Awards for Tracked Tenders. Returns the number of distinct
+    Tenders discovered in this run.
     """
     path = Path(raw_aggregated_ingestion["versions_path"])
     versions = json.loads(path.read_text(encoding="utf-8"))
@@ -145,7 +146,7 @@ def persist_tenders(
             "tender_changes_recorded": summary.changes_recorded,
         }
     )
-    return sum(1 for v in versions if v.get("discovered"))
+    return len({v["id"] for v in versions if v.get("discovered") and v.get("id")})
 
 
 @asset(group_name="iman", compute_kind="openai")

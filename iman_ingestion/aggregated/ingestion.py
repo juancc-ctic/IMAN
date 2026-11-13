@@ -363,6 +363,9 @@ def extract_tender_status(entry_el: ET.Element) -> Optional[str]:
 
 
 # TenderResultCode values meaning the Lot was declared void (desierto).
+# Other codes are kept as-is on the Award: 8 awarded, 9 formalised, and
+# 4 (desistimiento) / 5 (renuncia), which end the Lot with neither a winner
+# nor a void declaration.
 VOID_RESULT_CODES = frozenset({"3", "6", "7"})
 # Lot id used for a Tender that is not split into lots.
 SINGLE_LOT_ID = "1"

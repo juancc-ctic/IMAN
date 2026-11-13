@@ -68,7 +68,7 @@ class ApplySummary:
 
 
 @dataclass(frozen=True)
-class TenderState:
+class TenderView:
     id: str
     status: Optional[str]
     tracked: bool
@@ -82,8 +82,8 @@ class TenderState:
     triage_score: Optional[float]
 
 
-def _state(t: Tender) -> TenderState:
-    return TenderState(
+def _view(t: Tender) -> TenderView:
+    return TenderView(
         id=t.id,
         status=t.status,
         tracked=bool(t.tracked),
@@ -150,7 +150,12 @@ def _snapshot(session: Session, t: Tender) -> Dict[str, Any]:
 
 
 def _store_awards(session: Session, t: Tender, v: Dict[str, Any], at: datetime) -> None:
+    """Make the stored Awards match the version: the latest observed outcome per Lot."""
     lot_names = {lot.get("id"): lot.get("name") for lot in (v.get("lots") or [])}
+    observed = {a["lot_id"] for a in v.get("awards") or []}
+    for row in session.scalars(select(TenderAward).where(TenderAward.tender_id == t.id)).all():
+        if row.lot_id not in observed:
+            session.delete(row)
     for a in v.get("awards") or []:
         row = session.get(TenderAward, (t.id, a["lot_id"]))
         if row is None:
@@ -166,13 +171,13 @@ def _add_entry(session: Session, tender_id: str, kind: str, occurred_at: datetim
     session.add(TenderTimelineEntry(tender_id=tender_id, kind=kind, occurred_at=occurred_at, **fields))
 
 
-def start_tracking(session: Session, tender_id: str, *, by: str) -> TenderState:
+def start_tracking(session: Session, tender_id: str, *, by: str) -> TenderView:
     """Make a Tender a Tracked Tender; harmless if it already is one."""
     t = session.get(Tender, tender_id)
     if t is None:
         raise TenderNotFound(tender_id)
     if t.tracked:
-        return _state(t)
+        return _view(t)
     if t.status in TERMINAL_STATUSES:
         raise TrackingRefused(
             f"Tender {tender_id} is already {t.status}; there is nothing left to track."
@@ -185,10 +190,10 @@ def start_tracking(session: Session, tender_id: str, *, by: str) -> TenderState:
     t.tracking_end_reason = None
     _add_entry(session, t.id, "tracking_started", now, by=by, snapshot=_snapshot(session, t))
     session.flush()
-    return _state(t)
+    return _view(t)
 
 
-def stop_tracking(session: Session, tender_id: str, *, by: str) -> TenderState:
+def stop_tracking(session: Session, tender_id: str, *, by: str) -> TenderView:
     """Stop tracking a Tracked Tender at a person's request."""
     t = session.get(Tender, tender_id)
     if t is None:
@@ -198,7 +203,7 @@ def stop_tracking(session: Session, tender_id: str, *, by: str) -> TenderState:
     now = _now()
     _end_tracking(session, t, "manual", now, kind="tracking_stopped", by=by)
     session.flush()
-    return _state(t)
+    return _view(t)
 
 
 def _end_tracking(
@@ -243,7 +248,7 @@ def timeline(session: Session, tender_id: str) -> List[TimelineEntry]:
     ]
 
 
-def list_tracked(session: Session, *, ended: bool = False) -> List[TenderState]:
+def list_tracked(session: Session, *, ended: bool = False) -> List[TenderView]:
     """Currently Tracked Tenders, or (``ended=True``) those whose tracking ended."""
     stmt = select(Tender)
     if ended:
@@ -251,7 +256,7 @@ def list_tracked(session: Session, *, ended: bool = False) -> List[TenderState]:
         stmt = stmt.order_by(Tender.tracking_ended_at.desc(), Tender.id)
     else:
         stmt = stmt.where(Tender.tracked.is_(True)).order_by(Tender.tracked_since.desc(), Tender.id)
-    return [_state(t) for t in session.scalars(stmt).all()]
+    return [_view(t) for t in session.scalars(stmt).all()]
 
 
 def ingestion_scope(session: Session) -> IngestionScope:
@@ -263,9 +268,9 @@ def ingestion_scope(session: Session) -> IngestionScope:
     )
 
 
-def get_tender(session: Session, tender_id: str) -> Optional[TenderState]:
+def get_tender(session: Session, tender_id: str) -> Optional[TenderView]:
     t = session.get(Tender, tender_id)
-    return _state(t) if t is not None else None
+    return _view(t) if t is not None else None
 
 
 def _version_time(v: Dict[str, Any]) -> datetime:
@@ -293,7 +298,7 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
         at = _version_time(v)
         tender = session.get(Tender, v["id"])
         if v.get("deleted"):
-            if tender is not None and tender.tracked:
+            if tender is not None and tender.tracked and not _withdrawal_recorded(session, tender, at):
                 _end_tracking(session, tender, "withdrawn", at)
             continue
         if tender is None:
@@ -307,13 +312,33 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
         if tender.feed_updated_at is not None and at <= tender.feed_updated_at:
             continue
         if not tender.tracked:
-            _refresh(tender, v, at)
+            if v.get("discovered"):
+                _refresh(tender, v, at)
+            else:
+                # Filtered-out entry of a known, untracked Tender: keep its current
+                # Tender Status only; details stay as discovered/enriched.
+                tender.status = v.get("status")
+                tender.feed_updated_at = at
             continue
         summary.tracked_versions += 1
         if _apply_tracked_version(session, tender, v, at):
             summary.changes_recorded += 1
     session.flush()
     return summary
+
+
+def _withdrawal_recorded(session: Session, t: Tender, at: datetime) -> bool:
+    """True if this exact feed withdrawal already ended tracking (idempotent reruns)."""
+    return (
+        session.scalar(
+            select(TenderTimelineEntry.id).where(
+                TenderTimelineEntry.tender_id == t.id,
+                TenderTimelineEntry.end_reason == "withdrawn",
+                TenderTimelineEntry.occurred_at == at,
+            )
+        )
+        is not None
+    )
 
 
 def _diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:

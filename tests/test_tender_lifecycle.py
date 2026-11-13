@@ -473,3 +473,74 @@ def test_untracked_tenders_get_no_awards(db_session, ingest):
     ingest(REAL_AWARDS_FEED)
 
     assert lifecycle.awards(db_session, "20666652") == []
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+
+def test_old_withdrawal_does_not_end_tracking_started_afterwards(db_session, ingest):
+    _tracked(db_session, ingest)
+    tombstone = [Deleted(id="100", when="2026-11-12T00:00:10+01:00")]
+    ingest(tombstone)
+    lifecycle.start_tracking(db_session, "100", by="Luis")
+
+    ingest(tombstone)
+
+    assert lifecycle.get_tender(db_session, "100").tracked is True
+    kinds = [e.kind for e in lifecycle.timeline(db_session, "100")]
+    assert kinds == ["tracking_started", "tracking_ended", "tracking_started"]
+
+
+def test_award_for_a_lot_no_longer_in_the_feed_is_dropped(db_session, ingest):
+    _tracked(db_session, ingest)
+    ingest(
+        [
+            Entry(
+                id="100",
+                updated="2026-11-10T10:00:00+01:00",
+                status="ADJ",
+                lots=[Lot(id="1"), Lot(id="2")],
+                results=[
+                    Result(lot_id="1", winner="Datos Norte S.L.", amount="50000"),
+                    Result(lot_id="2", winner="Formación Sur S.L.", amount="20000"),
+                ],
+            )
+        ]
+    )
+
+    ingest(
+        [
+            Entry(
+                id="100",
+                updated="2026-11-20T10:00:00+01:00",
+                status="ADJ",
+                lots=[Lot(id="1")],
+                results=[Result(lot_id="1", winner="Datos Norte S.L.", amount="50000")],
+            )
+        ]
+    )
+
+    assert [a.lot_id for a in lifecycle.awards(db_session, "100")] == ["1"]
+    last = _changes(db_session)[-1]
+    assert [a["lot_id"] for a in last.changes["awards"]["after"]] == ["1"]
+
+
+def test_filtered_out_entry_only_refreshes_status_of_untracked_tender(db_session, ingest):
+    _published(ingest, pcap_url="https://example.org/pcap-v1.pdf")
+
+    ingest(
+        [
+            Entry(
+                id="100",
+                updated="2026-11-10T10:00:00+01:00",
+                status="EV",
+                pcap_url="https://example.org/pcap-v2.pdf",
+            )
+        ]
+    )
+
+    tender = lifecycle.get_tender(db_session, "100")
+    assert tender.status == "EV"
+    assert tender.details["pcap_url"] == "https://example.org/pcap-v1.pdf"
