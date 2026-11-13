@@ -80,7 +80,7 @@ Four assets run sequentially as the `iman_full_pipeline` job, scheduled daily at
 
 ### Feed Ingestion (`iman_ingestion/aggregated/ingestion.py`)
 
-Parses paginated ATOM feeds (XML with Atom/CBC/CAC namespaces), follows `rel="next"` links until the cutoff date, applies status (`PRE/PUB/EV`) and type filters (`TypeCode=2`, specific `SubTypeCode` values), and downloads PDFs with retry logic.
+Parses paginated ATOM feeds (XML with Atom/CBC/CAC namespaces), follows `rel="next"` links until the cutoff date, applies status (`PRE/PUB`, configurable via `tender_filters` in `company_profile.yaml`) and type filters (`TypeCode=2`, specific `SubTypeCode` values), and downloads PDFs with retry logic.
 
 ## Key Environment Variables
 

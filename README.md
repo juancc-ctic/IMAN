@@ -159,7 +159,7 @@ recommend-partners
 
 Procesa las licitaciones públicas españolas desde el feed ATOM hasta su puntuación final. Los assets se ejecutan en secuencia:
 
-1. **`raw_aggregated_ingestion`** — Recorre las páginas del feed ATOM siguiendo los enlaces `rel="next"` hasta la fecha de corte (`IMAN_CUTOFF_DATE`). Filtra por estado (`PRE`, `PUB`, `EV`) y tipo de contrato (código 2 con subcódigos específicos). Por cada licitación que pasa el filtro descarga `PCAP.pdf` (pliego de cláusulas administrativas) y `PPT.pdf` (prescripciones técnicas) en `downloads/<hash>/`. El resultado es un fichero JSON con los metadatos de todas las licitaciones descargadas.
+1. **`raw_aggregated_ingestion`** — Recorre las páginas del feed ATOM siguiendo los enlaces `rel="next"` hasta la fecha de corte (`IMAN_CUTOFF_DATE`). Filtra por estado (`PRE`, `PUB`; configurable en `tender_filters.contract_folder_statuses` de `company_profile.yaml`) y tipo de contrato (código 2 con subcódigos específicos). Por cada licitación que pasa el filtro descarga `PCAP.pdf` (pliego de cláusulas administrativas) y `PPT.pdf` (prescripciones técnicas) en `downloads/<hash>/`. El resultado es un fichero JSON con los metadatos de todas las licitaciones descargadas.
 
 2. **`persist_tenders`** — Lee el JSON anterior y hace un upsert de cada licitación en la tabla `tenders` (id, título, organismo, importes, URLs de PDF, plazo de presentación).
 
