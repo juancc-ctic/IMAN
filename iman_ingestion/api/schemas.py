@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -40,10 +40,51 @@ class TenderOut(BaseModel):
     summary: Optional[str] = None
     triage: Optional[dict[str, Any]] = None
     triage_score: Optional[float] = None
+    status: Optional[str] = None
+    tracked: bool = False
+    tracked_by: Optional[str] = None
+    tracked_since: Optional[str] = None
+    tracking_ended_at: Optional[str] = None
+    tracking_end_reason: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class TrackingRequest(BaseModel):
+    """Who is starting or stopping tracking (free text)."""
+
+    by: str = Field(min_length=1)
+
+
+class TimelineEntryOut(BaseModel):
+    kind: str
+    occurred_at: str
+    by: Optional[str] = None
+    status_before: Optional[str] = None
+    status_after: Optional[str] = None
+    changes: Optional[dict[str, Any]] = None
+    snapshot: Optional[dict[str, Any]] = None
+    end_reason: Optional[str] = None
+
+
+class AwardOut(BaseModel):
+    lot_id: str
+    lot_name: Optional[str] = None
+    result_code: Optional[str] = None
+    void: bool = False
+    winner_name: Optional[str] = None
+    winner_nif: Optional[str] = None
+    award_amount: Optional[str] = None
+    bids_received: Optional[int] = None
+    observed_at: str
+
+
+class TenderTimelineOut(BaseModel):
+    tender_id: str
+    entries: list[TimelineEntryOut]
+    awards: list[AwardOut]
 
 
 class TenderPatch(BaseModel):

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -49,6 +49,20 @@ class Tender(Base):
     execution_period: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     triage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     triage_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True, index=True)
+    # Tender Lifecycle (see GLOSSARY.md): current Tender Status from the latest
+    # applied feed version, plus tracking state for Tracked Tenders.
+    status: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    feed_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lots: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    tracked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    tracked_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tracked_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    tracking_ended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    tracking_end_reason: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -58,6 +72,47 @@ class Tender(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class TenderTimelineEntry(Base):
+    """One entry in a Tender's timeline: tracking action or Tender Change."""
+
+    __tablename__ = "tender_timeline"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tender_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tenders.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status_before: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    status_after: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    changes: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    end_reason: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+
+class TenderAward(Base):
+    """Award of one Lot of a Tender (latest observed outcome)."""
+
+    __tablename__ = "tender_awards"
+
+    tender_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tenders.id", ondelete="CASCADE"), primary_key=True
+    )
+    lot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    lot_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_code: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    void: Mapped[bool] = mapped_column(Boolean, default=False)
+    winner_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    winner_nif: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    award_amount: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    bids_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class EuItem(Base):

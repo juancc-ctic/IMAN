@@ -17,6 +17,7 @@ from iman_ingestion.aggregated.ingestion import (
 )
 from iman_ingestion.db.models import CompanyProfileRecord, Tender
 from iman_ingestion.db.session import session_scope
+from iman_ingestion import lifecycle
 from iman_ingestion.llm.client import (
     IMAN_ENRICHMENT_TOTAL_PAGES_KEY,
     analyze_tender_proposal,
@@ -87,12 +88,23 @@ def raw_aggregated_ingestion(
     context,
     iman_ingestion: ImanIngestionResource,
 ) -> Dict[str, Any]:
-    """Download filtered feed chain and PDFs; write tender JSON."""
+    """Download filtered feed chain and PDFs; write tender JSON and feed versions."""
     cfg = iman_ingestion.to_ingestion_config()
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    with session_scope() as session:
+        scope = lifecycle.ingestion_scope(session)
+    cfg.tracked_ids = scope.tracked_ids
+    cfg.known_ids = scope.known_ids
     result = run_ingestion(cfg, verbose=False)
+    versions_path = cfg.json_out.with_name(f"{cfg.json_out.stem}_versions.json")
+    versions_path.parent.mkdir(parents=True, exist_ok=True)
+    versions_path.write_text(
+        json.dumps(result.versions, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    tracked_versions = sum(1 for v in result.versions if v.get("id") in scope.tracked_ids)
     payload = {
         "json_path": str(cfg.json_out),
+        "versions_path": str(versions_path),
         "downloads_dir": str(cfg.output_dir),
         "tender_count": len(result.tenders_data),
         "total_downloads_attempted": result.total,
@@ -102,6 +114,8 @@ def raw_aggregated_ingestion(
         {
             "tender_count": len(result.tenders_data),
             "json_path": str(cfg.json_out),
+            "tracked_tenders": len(scope.tracked_ids),
+            "tracked_versions_seen": tracked_versions,
         }
     )
     return payload
@@ -109,36 +123,29 @@ def raw_aggregated_ingestion(
 
 @asset(group_name="iman", compute_kind="postgres")
 def persist_tenders(
+    context,
     raw_aggregated_ingestion: Dict[str, Any],
 ) -> int:
-    """Upsert tender rows from the JSON produced by ingestion."""
-    path = Path(raw_aggregated_ingestion["json_path"])
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise ValueError("Expected JSON array of tenders")
+    """Apply the run's feed versions through the Tender Lifecycle module.
 
-    count = 0
+    Creates newly discovered Tenders, refreshes known ones, and records Tender
+    Changes and Awards for Tracked Tenders.
+    """
+    path = Path(raw_aggregated_ingestion["versions_path"])
+    versions = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(versions, list):
+        raise ValueError("Expected JSON array of feed versions")
+
     with session_scope() as session:
-        for row in raw:
-            tid = row.get("id")
-            if not tid:
-                continue
-            tender = Tender(
-                id=tid,
-                link=row.get("link"),
-                title=row.get("title"),
-                party_name=row.get("party_name"),
-                tax_exclusive_amount=row.get("tax_exclusive_amount"),
-                estimated_overall_contract_amount=row.get(
-                    "estimated_overall_contract_amount"
-                ),
-                submission_deadline=row.get("submission_deadline"),
-                pcap_url=row.get("pcap_url"),
-                ppt_url=row.get("ppt_url"),
-            )
-            session.merge(tender)
-            count += 1
-    return count
+        summary = lifecycle.apply_feed_versions(session, versions)
+    context.add_output_metadata(
+        {
+            "tenders_created": summary.tenders_created,
+            "tracked_versions_processed": summary.tracked_versions,
+            "tender_changes_recorded": summary.changes_recorded,
+        }
+    )
+    return sum(1 for v in versions if v.get("discovered"))
 
 
 @asset(group_name="iman", compute_kind="openai")

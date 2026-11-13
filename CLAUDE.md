@@ -59,7 +59,7 @@ Four assets run sequentially as the `iman_full_pipeline` job, scheduled daily at
 
 1. **`raw_aggregated_ingestion`** — Parses ATOM feed pages, applies contract type/status filters, downloads PCAP.pdf and PPT.pdf per tender into `downloads/<tender_hash>/`. Outputs `licitaciones_extraidas.json`.
 
-2. **`persist_tenders`** — Upserts tender metadata from the JSON into the `tenders` PostgreSQL table.
+2. **`persist_tenders`** — Applies the run's feed versions through the Tender Lifecycle module (`iman_ingestion/lifecycle/`): creates newly discovered Tenders, refreshes the current Tender Status of known ones, and records Tender Changes and per-Lot Awards for Tracked Tenders (see `GLOSSARY.md`). Tracked Tender entries bypass the discovery filters.
 
 3. **`tender_llm_enrichment`** — For each tender, either rasterizes the PCAP.pdf into base64 PNGs (multimodal mode) or extracts text, then calls the LLM to produce structured JSONB analysis stored in `tenders.enrichment`. Skippable via `IMAN_SKIP_LLM_ENRICHMENT=1`.
 
@@ -107,6 +107,7 @@ Parses paginated ATOM feeds (XML with Atom/CBC/CAC namespaces), follows `rel="ne
 - Tests marked `llm_integration` require `IMAN_RUN_LLM_INTEGRATION=1` and a live LLM endpoint.
 - Set `IMAN_LLM_INTEGRATION_SKIP_ON_ERROR=1` to skip rather than fail when the API is unavailable.
 - Unit tests in `test_tender_fields.py` require no external services.
+- `test_tender_lifecycle.py` drives fixture Atom feeds through ingestion and the lifecycle module into a real Postgres; set `IMAN_TEST_DATABASE_URL` (the schema is dropped and rebuilt from migrations, so use a throwaway database). Skipped otherwise.
 
 ## Legacy Code
 

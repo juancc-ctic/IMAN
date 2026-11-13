@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 ATOM_NS = "http://www.w3.org/2005/Atom"
 CBC_NS = "urn:dgpe:names:draft:codice:schema:xsd:CommonBasicComponents-2"
 CAC_NS = "urn:dgpe:names:draft:codice:schema:xsd:CommonAggregateComponents-2"
+TOMBSTONES_NS = "http://purl.org/atompub/tombstones/1.0"
 
 HEADERS = {
     "User-Agent": (
@@ -65,17 +66,29 @@ class IngestionConfig:
         default_factory=lambda: ALLOWED_SUBTYPE_CODES
     )
     cpv_prefix: str = CPV_IT_SERVICES_PREFIX
+    # Tracked Tender ids: their entries bypass the discovery filters and are
+    # never re-downloaded. Known Tender ids: entries failing the filters still
+    # produce a feed version so the current Tender Status stays up to date.
+    tracked_ids: frozenset = field(default_factory=frozenset)
+    known_ids: frozenset = field(default_factory=frozenset)
 
 
 @dataclass
 class IngestionResult:
-    """Outcome of :func:`run_ingestion`."""
+    """Outcome of :func:`run_ingestion`.
+
+    ``tenders_data`` holds newly discovered (filter-passing, untracked) entries,
+    as before. ``versions`` holds every feed version relevant to the Tender
+    Lifecycle, in feed order (newest first), each with ``updated`` (ISO),
+    ``status``, ``discovered`` and ``deleted`` keys.
+    """
 
     tenders_data: List[Dict[str, Any]]
     total: int
     ok: int
     failed_with_detail: List[Tuple[str, str]]
     json_out: Optional[Path] = None
+    versions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def parse_atom_datetime(text: str) -> datetime:
@@ -330,6 +343,110 @@ def entry_has_allowed_contract_folder_status(
     return False
 
 
+def entry_passes_discovery_filters(entry_el: ET.Element, config: "IngestionConfig") -> bool:
+    """True if the entry passes the status, type/subtype and CPV discovery filters."""
+    return (
+        entry_has_allowed_contract_folder_status(entry_el, config.allowed_statuses)
+        and entry_has_allowed_type_and_subtype(
+            entry_el, config.allowed_type_code, config.allowed_subtype_codes
+        )
+        and entry_has_it_services_cpv(entry_el, config.cpv_prefix)
+    )
+
+
+def extract_tender_status(entry_el: ET.Element) -> Optional[str]:
+    """Return the entry's Tender Status code (PRE, PUB, EV, ADJ, RES, ANUL), or None."""
+    for elem in entry_el.iter():
+        if _xml_local_name(elem.tag or "") == "ContractFolderStatusCode":
+            return (elem.text or "").strip() or None
+    return None
+
+
+# TenderResultCode values meaning the Lot was declared void (desierto).
+VOID_RESULT_CODES = frozenset({"3", "6", "7"})
+# Lot id used for a Tender that is not split into lots.
+SINGLE_LOT_ID = "1"
+
+
+def _child_text(elem: Optional[ET.Element], path: str) -> Optional[str]:
+    if elem is None:
+        return None
+    found = elem.find(path)
+    if found is None:
+        return None
+    return (found.text or "").strip() or None
+
+
+def extract_lots(entry_el: ET.Element) -> List[Dict[str, Any]]:
+    """Return the entry's Lots as ``{"id", "name", "amount"}`` dicts (empty if not split)."""
+    CAC = f"{{{CAC_NS}}}"
+    CBC = f"{{{CBC_NS}}}"
+    lots: List[Dict[str, Any]] = []
+    for lot_el in entry_el.iter(f"{CAC}ProcurementProjectLot"):
+        lot_id = _child_text(lot_el, f"{CBC}ID")
+        if not lot_id:
+            continue
+        project = lot_el.find(f"{CAC}ProcurementProject")
+        lots.append(
+            {
+                "id": lot_id,
+                "name": _child_text(project, f"{CBC}Name"),
+                "amount": _child_text(project, f"{CAC}BudgetAmount/{CBC}TaxExclusiveAmount"),
+            }
+        )
+    return lots
+
+
+def extract_awards(entry_el: ET.Element) -> List[Dict[str, Any]]:
+    """Return one Award dict per Lot from the entry's TenderResult blocks.
+
+    Keys: ``lot_id``, ``result_code``, ``void``, ``winner_name``, ``winner_nif``,
+    ``award_amount``, ``bids_received``. Results without a lot id belong to the
+    single Lot of an undivided Tender.
+    """
+    CAC = f"{{{CAC_NS}}}"
+    CBC = f"{{{CBC_NS}}}"
+    by_lot: Dict[str, Dict[str, Any]] = {}
+    for res in entry_el.iter(f"{CAC}TenderResult"):
+        lot_id = _child_text(res, f"{CAC}AwardedTenderedProject/{CBC}ProcurementProjectLotID") or SINGLE_LOT_ID
+        code = _child_text(res, f"{CBC}ResultCode")
+        names = [
+            (n.text or "").strip()
+            for n in res.findall(f"{CAC}WinningParty/{CAC}PartyName/{CBC}Name")
+            if (n.text or "").strip()
+        ]
+        nifs = [
+            (n.text or "").strip()
+            for n in res.findall(f"{CAC}WinningParty/{CAC}PartyIdentification/{CBC}ID")
+            if (n.text or "").strip()
+        ]
+        bids_raw = _child_text(res, f"{CBC}ReceivedTenderQuantity")
+        award = {
+            "lot_id": lot_id,
+            "result_code": code,
+            "void": code in VOID_RESULT_CODES,
+            "winner_name": "; ".join(names) or None,
+            "winner_nif": "; ".join(nifs) or None,
+            "award_amount": _child_text(
+                res, f"{CAC}AwardedTenderedProject/{CAC}LegalMonetaryTotal/{CBC}TaxExclusiveAmount"
+            ),
+            "bids_received": int(bids_raw) if bids_raw and bids_raw.isdigit() else None,
+        }
+        existing = by_lot.get(lot_id)
+        if existing is None:
+            by_lot[lot_id] = award
+        else:
+            # Several results for one Lot (e.g. several winners): keep the first
+            # value of each field and accumulate winners.
+            for key in ("winner_name", "winner_nif"):
+                if award[key] and award[key] != existing[key]:
+                    existing[key] = "; ".join(x for x in (existing[key], award[key]) if x)
+            for key, value in award.items():
+                if existing.get(key) is None:
+                    existing[key] = value
+    return list(by_lot.values())
+
+
 def _extract_docs_from_ref_element(
     elem: ET.Element,
 ) -> Optional[Tuple[str, str]]:
@@ -463,7 +580,15 @@ def extract_tender_data(entry_el: ET.Element) -> Dict[str, Any]:
         "submission_deadline": extract_submission_deadline_from_entry(entry_el),
         "pcap_url": None,
         "ppt_url": None,
+        "updated": None,
+        "status": extract_tender_status(entry_el),
+        "lots": extract_lots(entry_el),
+        "awards": extract_awards(entry_el),
     }
+
+    updated_el = entry_el.find(f"{ATOM}updated")
+    if updated_el is not None and (updated_el.text or "").strip():
+        data["updated"] = (updated_el.text or "").strip()
 
     id_el = entry_el.find(f".//{ATOM}id")
     if id_el is not None:
@@ -526,6 +651,11 @@ def run_ingestion(
     ok = 0
     failed_with_detail: List[Tuple[str, str]] = []
     tenders_data: List[Dict[str, Any]] = []
+    versions: List[Dict[str, Any]] = []
+    # Newer filtered-out versions of Tenders not yet known; kept in case an older
+    # entry later in the (newest-first) walk discovers the Tender in this run.
+    pending_versions: Dict[str, List[Dict[str, Any]]] = {}
+    discovered_ids: set[str] = set()
 
     for feed_source, root, feed_updated in iter_feed_documents(
         config.atom_source,
@@ -538,21 +668,39 @@ def run_ingestion(
             updated_s = feed_updated.isoformat() if feed_updated else "?"
             logger.info("Using feed %s (updated %s)", feed_source, updated_s)
 
+        for deleted in root.findall(f".//{{{TOMBSTONES_NS}}}deleted-entry"):
+            ref = (deleted.get("ref") or "").strip()
+            tid = ref.rsplit("/", 1)[-1] if "/" in ref else ref
+            if tid and tid in config.tracked_ids:
+                versions.append(
+                    {"id": tid, "updated": deleted.get("when"), "deleted": True, "discovered": False}
+                )
+
         entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
         if not entries:
             entries = list(root)
 
         hit_limit = False
         for entry in entries:
-            if not entry_has_allowed_contract_folder_status(entry, config.allowed_statuses):
+            discovered = entry_passes_discovery_filters(entry, config)
+            tender_info = extract_tender_data(entry)
+            tid = tender_info.get("id")
+            if tid in config.tracked_ids:
+                versions.append({**tender_info, "discovered": discovered, "deleted": False})
                 continue
-            if not entry_has_allowed_type_and_subtype(entry, config.allowed_type_code, config.allowed_subtype_codes):
-                continue
-            if not entry_has_it_services_cpv(entry, config.cpv_prefix):
+            if not discovered:
+                if tid in config.known_ids:
+                    versions.append({**tender_info, "discovered": False, "deleted": False})
+                elif tid:
+                    pending_versions.setdefault(tid, []).append(
+                        {**tender_info, "discovered": False, "deleted": False}
+                    )
                 continue
 
-            tender_info = extract_tender_data(entry)
+            if tid:
+                discovered_ids.add(tid)
             tenders_data.append(tender_info)
+            versions.append({**tender_info, "discovered": True, "deleted": False})
 
             folder_name = get_entry_folder_name(entry)
             entry_dir = config.output_dir / folder_name
@@ -603,6 +751,9 @@ def run_ingestion(
                 )
             break
 
+    for tid in discovered_ids:
+        versions.extend(pending_versions.get(tid, []))
+
     json_written: Optional[Path] = None
     if not config.no_download:
         config.json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -616,4 +767,5 @@ def run_ingestion(
         ok=ok,
         failed_with_detail=failed_with_detail,
         json_out=json_written,
+        versions=versions,
     )

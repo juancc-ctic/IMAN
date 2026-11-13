@@ -128,6 +128,9 @@ pytest tests/
 
 # Tests con LLM real
 IMAN_RUN_LLM_INTEGRATION=1 pytest tests/test_tender_llm_integration.py -v
+
+# Tests del ciclo de vida (Postgres desechable con pgvector; el esquema se recrea)
+IMAN_TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/iman_test pytest tests/test_tender_lifecycle.py -v
 ```
 
 ---
@@ -161,7 +164,7 @@ Procesa las licitaciones públicas españolas desde el feed ATOM hasta su puntua
 
 1. **`raw_aggregated_ingestion`** — Recorre las páginas del feed ATOM siguiendo los enlaces `rel="next"` hasta la fecha de corte (`IMAN_CUTOFF_DATE`). Filtra por estado (`PRE`, `PUB`; configurable en `tender_filters.contract_folder_statuses` de `company_profile.yaml`) y tipo de contrato (código 2 con subcódigos específicos). Por cada licitación que pasa el filtro descarga `PCAP.pdf` (pliego de cláusulas administrativas) y `PPT.pdf` (prescripciones técnicas) en `downloads/<hash>/`. El resultado es un fichero JSON con los metadatos de todas las licitaciones descargadas.
 
-2. **`persist_tenders`** — Lee el JSON anterior y hace un upsert de cada licitación en la tabla `tenders` (id, título, organismo, importes, URLs de PDF, plazo de presentación).
+2. **`persist_tenders`** — Aplica las versiones del feed de la ejecución mediante el módulo de ciclo de vida (`iman_ingestion/lifecycle/`): crea las licitaciones nuevas, actualiza el estado oficial de las conocidas y, para las licitaciones en seguimiento (*Tracked Tenders*), registra cada cambio y las adjudicaciones por lote. Las entradas de licitaciones en seguimiento no pasan por los filtros de descubrimiento. API: `POST /tenders/{id}/tracking`, `POST /tenders/{id}/tracking/stop`, `GET /tenders/{id}/timeline`, `GET /tenders/tracked`.
 
 3. **`tender_llm_enrichment`** — Para cada licitación, si `IMAN_USE_MULTIMODAL_LLM=true` rasteriza el `PCAP.pdf` a imágenes PNG (vía `pdftoppm`) y las envía al LLM en bloques; si no, extrae el texto del PDF. El LLM devuelve un JSONB estructurado con: alcance del contrato, lotes, requisitos de solvencia, perfiles requeridos, criterios de valoración, posibilidad de subcontratación y flags de descarte. Este resultado se guarda en `tenders.enrichment`.
 
