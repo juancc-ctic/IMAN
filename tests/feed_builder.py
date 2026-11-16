@@ -32,7 +32,7 @@ class Lot:
 
 
 @dataclass
-class Result:
+class AwardResult:
     """One TenderResult block. ``code``: 8 awarded, 9 formalised, 3 void."""
 
     code: str = "8"
@@ -59,7 +59,7 @@ class Entry:
     pcap_url: Optional[str] = None
     ppt_url: Optional[str] = None
     lots: List[Lot] = field(default_factory=list)
-    results: List[Result] = field(default_factory=list)
+    results: List[AwardResult] = field(default_factory=list)
 
 
 @dataclass
@@ -83,7 +83,7 @@ def _lot_xml(lot: Lot) -> str:
     )
 
 
-def _result_xml(r: Result) -> str:
+def _result_xml(r: AwardResult) -> str:
     parts = [f"<cac:TenderResult><cbc:ResultCode>{r.code}</cbc:ResultCode>"]
     if r.bids is not None:
         parts.append(f"<cbc:ReceivedTenderQuantity>{r.bids}</cbc:ReceivedTenderQuantity>")

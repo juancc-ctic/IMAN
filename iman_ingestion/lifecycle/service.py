@@ -149,8 +149,20 @@ def _snapshot(session: Session, t: Tender) -> Dict[str, Any]:
     return snap
 
 
+# Award fields that come straight from the feed version (lot_id is the key and
+# lot_name is looked up from the version's Lots).
+_FEED_AWARD_FIELDS = tuple(f for f in AWARD_FIELDS if f not in ("lot_id", "lot_name"))
+
+
 def _store_awards(session: Session, t: Tender, v: Dict[str, Any], at: datetime) -> None:
-    """Make the stored Awards match the version: the latest observed outcome per Lot."""
+    """Make the stored Awards match the version: the latest observed outcome per Lot.
+
+    A version without any award results leaves existing Awards untouched (the
+    feed omitted them); one with results replaces the set, dropping Lots no
+    longer awarded.
+    """
+    if not v.get("awards"):
+        return
     lot_names = {lot.get("id"): lot.get("name") for lot in (v.get("lots") or [])}
     observed = {a["lot_id"] for a in v.get("awards") or []}
     for row in session.scalars(select(TenderAward).where(TenderAward.tender_id == t.id)).all():
@@ -162,7 +174,7 @@ def _store_awards(session: Session, t: Tender, v: Dict[str, Any], at: datetime) 
             row = TenderAward(tender_id=t.id, lot_id=a["lot_id"])
             session.add(row)
         row.lot_name = lot_names.get(a["lot_id"])
-        for f in AWARD_FIELDS[2:]:
+        for f in _FEED_AWARD_FIELDS:
             setattr(row, f, a.get(f))
         row.observed_at = at
 
@@ -281,10 +293,21 @@ def _version_time(v: Dict[str, Any]) -> datetime:
 
 
 def _refresh(t: Tender, v: Dict[str, Any], at: datetime) -> None:
+    """Apply a version's details; a field the version omits keeps its stored value."""
     for f in DETAIL_FIELDS:
-        setattr(t, f, v.get(f))
-    t.status = v.get("status")
-    t.lots = v.get("lots") or []
+        if v.get(f) is not None:
+            setattr(t, f, v.get(f))
+    _refresh_outcome(t, v, at)
+
+
+def _refresh_outcome(t: Tender, v: Dict[str, Any], at: datetime) -> None:
+    """Apply a version's Tender Status and Lots (kept when omitted)."""
+    if v.get("status") is not None:
+        t.status = v.get("status")
+    if v.get("lots"):
+        t.lots = v.get("lots")
+    elif t.lots is None:
+        t.lots = []
     t.feed_updated_at = at
 
 
@@ -294,11 +317,17 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
     ordered: List[Dict[str, Any]] = sorted(
         (v for v in versions if v.get("id")), key=_version_time
     )
+    # Newest non-withdrawal entry per Tender in this run: a withdrawal older than
+    # it was undone by a republication and must not end tracking.
+    latest_entry: Dict[str, datetime] = {}
+    for v in ordered:
+        if not v.get("deleted"):
+            latest_entry[v["id"]] = _version_time(v)
     for v in ordered:
         at = _version_time(v)
         tender = session.get(Tender, v["id"])
         if v.get("deleted"):
-            if tender is not None and tender.tracked and not _withdrawal_recorded(session, tender, at):
+            if tender is not None and tender.tracked and _withdrawal_applies(session, tender, at, latest_entry.get(tender.id)):
                 _end_tracking(session, tender, "withdrawn", at)
             continue
         if tender is None:
@@ -307,6 +336,7 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
             tender = Tender(id=v["id"], tracked=False)
             session.add(tender)
             _refresh(tender, v, at)
+            _store_awards(session, tender, v, at)
             summary.tenders_created += 1
             continue
         if tender.feed_updated_at is not None and at <= tender.feed_updated_at:
@@ -315,10 +345,11 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
             if v.get("discovered"):
                 _refresh(tender, v, at)
             else:
-                # Filtered-out entry of a known, untracked Tender: keep its current
-                # Tender Status only; details stay as discovered/enriched.
-                tender.status = v.get("status")
-                tender.feed_updated_at = at
+                # Filtered-out entry of a known, untracked Tender: refresh its
+                # outcome (status, Lots, Awards) only; details and documents stay
+                # as discovered/enriched.
+                _refresh_outcome(tender, v, at)
+            _store_awards(session, tender, v, at)
             continue
         summary.tracked_versions += 1
         if _apply_tracked_version(session, tender, v, at):
@@ -327,8 +358,23 @@ def apply_feed_versions(session: Session, versions: Iterable[Dict[str, Any]]) ->
     return summary
 
 
+def _withdrawal_applies(
+    session: Session, t: Tender, at: datetime, latest_entry_in_run: Optional[datetime]
+) -> bool:
+    """True if a feed withdrawal dated ``at`` should end this Tracked Tender's tracking.
+
+    Ignored when a newer entry for the Tender was already applied or appears in
+    this run (withdrawn then republished), or when this exact withdrawal was
+    already recorded (idempotent reruns).
+    """
+    for newer in (t.feed_updated_at, latest_entry_in_run):
+        if newer is not None and at <= newer:
+            return False
+    return not _withdrawal_recorded(session, t, at)
+
+
 def _withdrawal_recorded(session: Session, t: Tender, at: datetime) -> bool:
-    """True if this exact feed withdrawal already ended tracking (idempotent reruns)."""
+    """True if this exact feed withdrawal already ended tracking."""
     return (
         session.scalar(
             select(TenderTimelineEntry.id).where(

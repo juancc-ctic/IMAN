@@ -87,8 +87,8 @@ def list_tenders(
 def list_tracked_tenders(ended: bool = False) -> list[TenderOut]:
     """Tracked Tenders; with ``ended=true``, Tenders whose tracking has ended."""
     with session_scope() as session:
-        states = lifecycle.list_tracked(session, ended=ended)
-        return [_tender_to_out(session.get(Tender, s.id)) for s in states]
+        tracked = lifecycle.list_tracked(session, ended=ended)
+        return [_tender_to_out(session.get(Tender, t.id)) for t in tracked]
 
 
 @router.post("/{tender_id}/tracking", response_model=TenderOut)

@@ -14,7 +14,7 @@ import pytest
 
 from iman_ingestion import lifecycle
 from iman_ingestion.aggregated.ingestion import IngestionConfig, run_ingestion
-from tests.feed_builder import Deleted, Entry, Lot, Result, write_feed_chain
+from tests.feed_builder import Deleted, Entry, Lot, AwardResult, write_feed_chain
 
 REAL_AWARDS_FEED = Path(__file__).parent / "fixtures" / "feeds" / "real_awards.atom"
 
@@ -446,7 +446,7 @@ def test_award_changes_are_updated_not_duplicated(db_session, ingest):
                 id="100",
                 updated="2026-11-10T10:00:00+01:00",
                 status="ADJ",
-                results=[Result(code="8", winner="Datos Norte S.L.", amount="80000", bids=3)],
+                results=[AwardResult(code="8", winner="Datos Norte S.L.", amount="80000", bids=3)],
             )
         ]
     )
@@ -457,7 +457,7 @@ def test_award_changes_are_updated_not_duplicated(db_session, ingest):
                 id="100",
                 updated="2026-11-20T10:00:00+01:00",
                 status="ADJ",
-                results=[Result(code="9", winner="Datos Norte S.L.", amount="79500", bids=3)],
+                results=[AwardResult(code="9", winner="Datos Norte S.L.", amount="79500", bids=3)],
             )
         ]
     )
@@ -467,12 +467,17 @@ def test_award_changes_are_updated_not_duplicated(db_session, ingest):
     assert len(_changes(db_session)) == 2
 
 
-def test_untracked_tenders_get_no_awards(db_session, ingest):
+def test_known_untracked_tender_keeps_its_awards_for_a_later_tracking_snapshot(db_session, ingest):
     _published(ingest, "20666652")
 
     ingest(REAL_AWARDS_FEED)
+    lifecycle.start_tracking(db_session, "20666652", by="Ana")
 
-    assert lifecycle.awards(db_session, "20666652") == []
+    [award] = lifecycle.awards(db_session, "20666652")
+    assert award.winner_name == "AUDENIS, S.L."
+    [started] = lifecycle.timeline(db_session, "20666652")
+    assert started.snapshot["status"] == "ADJ"
+    assert [a["winner_name"] for a in started.snapshot["awards"]] == ["AUDENIS, S.L."]
 
 
 # ---------------------------------------------------------------------------
@@ -503,8 +508,8 @@ def test_award_for_a_lot_no_longer_in_the_feed_is_dropped(db_session, ingest):
                 status="ADJ",
                 lots=[Lot(id="1"), Lot(id="2")],
                 results=[
-                    Result(lot_id="1", winner="Datos Norte S.L.", amount="50000"),
-                    Result(lot_id="2", winner="Formación Sur S.L.", amount="20000"),
+                    AwardResult(lot_id="1", winner="Datos Norte S.L.", amount="50000"),
+                    AwardResult(lot_id="2", winner="Formación Sur S.L.", amount="20000"),
                 ],
             )
         ]
@@ -517,7 +522,7 @@ def test_award_for_a_lot_no_longer_in_the_feed_is_dropped(db_session, ingest):
                 updated="2026-11-20T10:00:00+01:00",
                 status="ADJ",
                 lots=[Lot(id="1")],
-                results=[Result(lot_id="1", winner="Datos Norte S.L.", amount="50000")],
+                results=[AwardResult(lot_id="1", winner="Datos Norte S.L.", amount="50000")],
             )
         ]
     )
@@ -544,3 +549,54 @@ def test_filtered_out_entry_only_refreshes_status_of_untracked_tender(db_session
     tender = lifecycle.get_tender(db_session, "100")
     assert tender.status == "EV"
     assert tender.details["pcap_url"] == "https://example.org/pcap-v1.pdf"
+
+
+def test_withdrawn_then_republished_in_one_run_keeps_tracking(db_session, ingest):
+    _tracked(db_session, ingest)
+
+    ingest(
+        [Entry(id="100", updated="2026-11-12T12:00:00+01:00", status="EV")],
+        [Deleted(id="100", when="2026-11-12T00:00:10+01:00")],
+    )
+
+    assert lifecycle.get_tender(db_session, "100").tracked is True
+    assert [e.kind for e in lifecycle.timeline(db_session, "100")] == ["tracking_started", "change"]
+
+
+def test_withdrawal_older_than_latest_entry_is_ignored(db_session, ingest):
+    _tracked(db_session, ingest)
+    ingest([Entry(id="100", updated="2026-11-12T12:00:00+01:00", status="EV")])
+
+    ingest([Deleted(id="100", when="2026-11-12T00:00:10+01:00")])
+
+    assert lifecycle.get_tender(db_session, "100").tracked is True
+
+
+def test_field_missing_from_a_later_entry_keeps_its_value(db_session, ingest):
+    _tracked(db_session, ingest, pcap_url="https://example.org/pcap.pdf", deadline="2026-12-01")
+
+    ingest([Entry(id="100", updated="2026-11-10T10:00:00+01:00", status="EV", deadline=None)])
+
+    tender = lifecycle.get_tender(db_session, "100")
+    assert tender.details["pcap_url"] == "https://example.org/pcap.pdf"
+    assert tender.details["submission_deadline"] == "2026-12-01"
+    [change] = _changes(db_session)
+    assert set(change.changes) == {"status"}
+
+
+def test_entry_without_award_results_keeps_existing_awards(db_session, ingest):
+    _tracked(db_session, ingest)
+    ingest(
+        [
+            Entry(
+                id="100",
+                updated="2026-11-10T10:00:00+01:00",
+                status="ADJ",
+                results=[AwardResult(winner="Datos Norte S.L.", amount="80000")],
+            )
+        ]
+    )
+
+    ingest([Entry(id="100", updated="2026-11-20T10:00:00+01:00", status="ADJ", title="Corrección")])
+
+    assert [a.winner_name for a in lifecycle.awards(db_session, "100")] == ["Datos Norte S.L."]
